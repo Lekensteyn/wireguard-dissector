@@ -17,20 +17,23 @@ local F = {
 }
 proto_wg.fields = F
 
+-- Convenience function for consuming part of the buffer and remembering the
+-- offset for the next time.
 function next_tvb(tvb)
     local offset = 0
-    return {
-        __metatable = {
-            __call = function(len)
-                local t = tvb(offset, len)
-                offset = offset + len
-                return t
-            end,
-        },
+    return setmetatable({
+        -- Returns the current offset.
         offset = function()
             return offset
-        end
-    }
+        end,
+    }, {
+        -- Returns the TVB with the requested length
+        __call = function(self, len)
+            local t = tvb(offset, len)
+            offset = offset + len
+            return t
+        end,
+    })
 end
 
 function dissect_initiator(tvb, pinfo, tree)
