@@ -37,6 +37,7 @@ function next_tvb(tvb)
         __call = function(self, len)
             local t = tvb(offset, len)
             offset = offset + len
+            self.tvb = t
             return t
         end,
     })
@@ -47,6 +48,7 @@ function dissect_initiator(tvb, pinfo, tree)
     tree:add(F.type,        t(1))
     tree:add(F.reserved,    t(3))
     tree:add(F.sender,      t(4))
+    pinfo.cols.info:append(string.format(", sender=0x%08X", t.tvb:uint()))
     tree:add(F.ephemeral,   t(32))
     tree:add(F.static,      t(16+32)) -- 16 is AEAD tag length
     tree:add(F.timestamp,   t(16+12))
@@ -60,7 +62,9 @@ function dissect_responder(tvb, pinfo, tree)
     tree:add(F.type,        t(1))
     tree:add(F.reserved,    t(3))
     tree:add(F.sender,      t(4))
+    pinfo.cols.info:append(string.format(", sender=0x%08X", t.tvb:uint()))
     tree:add(F.receiver,    t(4))
+    pinfo.cols.info:append(string.format(", receiver=0x%08X", t.tvb:uint()))
     tree:add(F.ephemeral,   t(32))
     tree:add(F.empty,       t(16+0)) -- AEAD
     tree:add(F.mac1,        t(16))
@@ -73,6 +77,7 @@ function dissect_cookie(tvb, pinfo, tree)
     tree:add(F.type,        t(1))
     tree:add(F.reserved,    t(3))
     tree:add(F.receiver,    t(4))
+    pinfo.cols.info:append(string.format(", receiver=0x%08X", t.tvb:uint()))
     tree:add(F.nonce,       t(24))
     tree:add(F.cookie,      t(16+16)) -- AEAD
     return t:offset()
@@ -82,8 +87,14 @@ function dissect_data(tvb, pinfo, tree)
     local t = next_tvb(tvb)
     tree:add(F.type,        t(1))
     tree:add(F.reserved,    t(3))
-    tree:add(F.counter,     t(8))
+    tree:add(F.receiver,    t(4))
+    pinfo.cols.info:append(string.format(", receiver=0x%08X", t.tvb:uint()))
+    tree:add_le(F.counter,  t(8))
+    pinfo.cols.info:append(string.format(", counter=%s", t.tvb:le_uint64()))
     local packet_length = tvb:len() - t:offset() -- length includes AEAD tag
+    if packet_length > 16 then
+        pinfo.cols.info:append(string.format(", datalen=%s", packet_length - 16))
+    end
     tree:add(F.packet,      t(packet_length))
     return t:offset()
 end
