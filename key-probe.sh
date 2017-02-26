@@ -2,12 +2,12 @@
 # Enable extraction of WireGuard keys
 #
 # wgkey0: sender ID                                 id=%x
-# wgkey4: Responder ID                              mask=%d id=%x
-# wgkey1: key for static/timestamp/empty            src_len=%d key1..4=%x
+# wgkey1: key for static/timestamp/empty (encr)     src_len=%d key1..4=%x
+# wgkey7: key for static/timestamp/empty (decr)     src_len=%d key1..4=%x
 # wgkey2: traffic secret base key (need inlen=0)    inlen=%d key1..4=%x
 # wgkey3: cookie key                                key1..4=%x
-# wgkey5: link sender+receiver (initiator)          initiator=%x responder=%x
-# wgkey6: link sender+receiver (responder)          initiator=%x responder=%x
+# wgkey5: link sender+receiver (initiator consume)  initiator=%x responder=%x
+# wgkey6: link sender (responder consume)           initiator=%x
 # NOTE: key1..key4 are affected by endianess (little endian on x86-64).
 #
 # See also Documentation/trace/kprobetrace.txt
@@ -27,19 +27,13 @@ echo 0 | tee /sys/kernel/debug/tracing/events/kprobes/wgkey*/enable &>/dev/null 
 echo > /sys/kernel/debug/tracing/kprobe_events \
     'r:wgkey0 wireguard:index_hashtable_insert id=$retval:x32'
 
-# Find Responder ID
-# noise_handshake_consume_response
-# -> index_hashtable_lookup(..., mask=1, id=...):
-echo >> /sys/kernel/debug/tracing/kprobe_events \
-    'p:wgkey4 wireguard:index_hashtable_lookup mask=%si:u32 id=%dx:x32'
-
 # Find link between Initiator and Responder IDs
 # noise_handshake_consume_response(msg, ...)
-# noise_handshake_create_response(msg, ...)
+# noise_handshake_consume_initiation(msg, ...)
 echo >> /sys/kernel/debug/tracing/kprobe_events \
     'p:wgkey5 wireguard:noise_handshake_consume_response initiator=+8(%di):x32 responder=+4(%di):x32'
 echo >> /sys/kernel/debug/tracing/kprobe_events \
-    'p:wgkey6 wireguard:noise_handshake_create_response  initiator=+4(%di):x32 responder=+8(%di):x32'
+    'p:wgkey6 wireguard:noise_handshake_consume_initiation initiator=+4(%di):x32'
 
 
 # Set new kprobe
@@ -53,6 +47,12 @@ echo >> /sys/kernel/debug/tracing/kprobe_events \
 # Key length for ChaCha20-Poly1305 is always 32 bytes.
 echo >> /sys/kernel/debug/tracing/kprobe_events \
     'p:wgkey1 wireguard:chacha20poly1305_encrypt src_len=%dx:u64 key1=+0(%cx) key2=+8(%cx) key3=+0x10(%cx) key4=+0x18(%cx)'
+
+# noise_handshake_consume_initiation / noise_handshake_consume_response
+# -> handshake_decrypt
+#    -> chacha20poly1305_decrypt
+echo >> /sys/kernel/debug/tracing/kprobe_events \
+    'p:wgkey7 wireguard:chacha20poly1305_decrypt src_len=%dx:u64 key1=+0(%cx) key2=+8(%cx) key3=+0x10(%cx) key4=+0x18(%cx)'
 
 # Grab keys for KDF and remember input data length for context.
 # noise_handshake_begin_session
@@ -83,4 +83,6 @@ echo > /sys/kernel/debug/tracing/trace
 # Show command to read trace
 cat <<EOF
 cat /sys/kernel/debug/tracing/trace
+# read indefinitely and clear buffer
+cat /sys/kernel/debug/tracing/trace_pipe
 EOF

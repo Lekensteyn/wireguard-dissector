@@ -35,38 +35,78 @@ _logger = logging.getLogger(__name__)
 # wgkey1: encrypt       src_len=12      handshake_encrypt           data=timestamp
 # wgkey0: ht_insert     id=(I)                                      ->sender ID
 # -- RESPONSE PROC (need Sender/Receiver ID, depending on side) under handshake lock
-# (if PSK is in use: mix_key)
 # wgkey5: consume_resp  initiator=(I) responder=(R)                 ->initiator+responder ID
-# wgkey4: index_ht      mask=1 id=(I)                               ->receiver ID
+# (if PSK is in use: mix_key)
 # wgkey2: blake2s_hmac  inlen=32,1,33   mix_key -> kdf(#data=32)    just update ChainedKey
 # wgkey2: blake2s_hmac  inlen=32,1,33   mix_key -> kdf(#data=32)    ->key2 for empty
+# wgkey7: decrypt       src_len=0       handshake_decrypt           data="" (empty)
 # -- (not under HS lock):
 # wgkey2: blake2s_hmac  inlen=0,1,33    derive_secrets -> kdf(0)    data="", ->key1,2 for two traffic keys
 # -- TRANSPORT (need Receiver ID)
 
-# Guessed sequence (Responder perspective):
-# TODO
+# Observed sequence (Responder perspective):
+# -- INIT PROC *not* under handshake lock (only static_identity lock)
+# wgkey6: consume_init  initiator=(I)                               ->initiator ID
+# (if PSK is in use: mix_key)
+# wgkey2: blake2s_hmac  inlen=32,1,33   mix_key -> kdf(#data=32)    ->key2 for static
+# wgkey7: decrypt       src_len=32+16   handshake_decrypt           data=encrypted static
+# wgkey2: blake2s_hmac  inlen=32,1,33   mix_key -> kdf(#data=32)    ->key2 for timestamp
+# wgkey7: decrypt       src_len=12+16   handshake_decrypt           data=encrypted timestamp
+# -- RESPONSE under handshake lock
+# (if PSK is in use: mix_key)
 # wgkey2: blake2s_hmac  inlen=32,1,33   mix_key -> kdf(#data=32)    just update ChainedKey
 # wgkey2: blake2s_hmac  inlen=32,1,33   mix_key -> kdf(#data=32)    ->key2 for empty
-# wgkey1: encrypt       src_len=0       handshake_encrypt           data=""
+# wgkey1: encrypt       src_len=0       handshake_encrypt           data="" (empty)
+# wgkey0: ht_insert     id=(R)                                      ->sender ID
 # -- (not under HS lock):
 # wgkey2: blake2s_hmac  inlen=0,1,33    derive_secrets -> kdf(0)    data="", ->key1,2 for two traffic keys
 
+# Note: with multiple handshakes, there can still be a race in output... so locking is useless
+# noise_handshake_consume_initiation (no lookup otherwise...). Can be racy!
+# src->sender_index     +4($di)
+#
 # Not so reliable values (could be intermixed with other messages).
 # BUT can be used to link receiver ID to sender ID (and vice versa)
 # noise_handshake_consume_response(struct message_handshake_response *src, ...)
-# noise_handshake_create_response(struct message_handshake_response *dst, ...)
 # src->sender_index     +4($di)
 # src->receiver_index   +8($di)
+
+
+# KDF output and encrypt/decrypt keys have common information.
+# Can obtain the following keys (triggered sender I/R between parentheses):
+# (create_initiation)
+# v- encrypt(src_len=32)        static (I)
+# v- encrypt(src_len=12)        timestamp (I)
+# ht_insert                     returns Sender ID (IID)
+# [can clear static, timestamp, IID]
+#
+# consume_response(src={responder_id, initiator_id})
+#    v- kdf                     traffic secrets (IID+RID from src)
+# ^- decrypt(src_len=0+16)      empty (I)
+# [can clear empty, RID, IID]
+#
+# consume_initiation(src={initiator_id})
+# ^- decrypt(src_len=32+16)     static (R)
+# ^- decrypt(src_len=12+16)     timestamp (R)
+# [can clear static, timestamp, but not IID]
+# (create_response)
+#    v- kdf                     traffic secrets (RID from next ht_insert, IID from consume_initiation)
+# v- encrypt(src_len=0)         empty (R)
+# ht_insert                     returns Sender ID (RID)
+# [can clear empty, IID, RID]
+#
+# NOTE: last kdf before encrypt/decrypt(src_len=0) is traffic secret
+# NOTE: encrypt provides information about side, ht_insert returns Sender ID
+
 
 # Identifiers produced by kprobes
 TYPE_ID_INSERT          = "wgkey0"
 TYPE_HANDSHAKE_ENCRYPT  = "wgkey1"
+TYPE_HANDSHAKE_DECRYPT  = "wgkey7"
 TYPE_BLAKE2S_HMAC       = "wgkey2"
 TYPE_COOKIE             = "wgkey3"
-TYPE_I_RESPONDER_ID     = "wgkey4"
-TYPE_I_IDS              = "wgkey5"
-TYPE_R_IDS              = "wgkey6"
+TYPE_CONSUME_INITIATION = "wgkey6"
+TYPE_CONSUME_RESPONSE   = "wgkey5"
 
 # Size of the input data for AEAD (src_len)
 SIZE_STATIC = 32
@@ -77,10 +117,10 @@ SIZE_EMPTY = 0
 INDEX_HASHTABLE_HANDSHAKE = 1
 
 # Identifiers for output
-KEY_STATIC      = "STATIC"
-KEY_TIMESTAMP   = "TIMESTAMP"
-KEY_EMPTY       = "EMPTY"
-KEY_TRAFFIC     = "TRAFFIC"
+KEY_STATIC      = "STAT"
+KEY_TIMESTAMP   = "TIME"
+KEY_EMPTY       = "EMPT"
+KEY_TRAFFIC     = "DATA"
 
 
 def parse_args_dict(text):
@@ -93,7 +133,7 @@ def parse_args_dict(text):
 
 
 def parse_lines(f):
-    pattern = r'.*: (?P<key>wgkey[0-6]): \([^)]+\) (?P<args>.+)'
+    pattern = r'.*: (?P<key>wgkey[0-7]): \([^)]+\) (?P<args>.+)'
     for line in f:
         line = line.strip()
         m = re.match(pattern, line)
@@ -183,91 +223,94 @@ def main():
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
         format='%(asctime)s - %(message)s')
 
-    # Maps initiator ID to responder ID (and vice versa)
-    map_ir, map_ri = {}, {}
     # Remember updates to the KDF such that the output can be calculated later.
     kdf = Kdf()
+    # Whether the current context is an Initiator or Responder
+    context_is_responder = None
 
-    # Collected keys for the initiator side
-    static_key, timestamp_key = None, None
+    # Collected keys for both sides (at Initiator or Responder side)
+    static_key_I, timestamp_key_I = None, None
+    empty_key_R = None
+    traffic_keys_I, traffic_keys_R = None, None
 
-    # Context for response processing
-    responder_id = None
-    response_kdf_seen = 0
+    # Context for received message processing (at Initiator or Responder side)
+    initiator_id_R = None
+    responder_id_I, initiator_id_I = None, None
 
     for what, args in parse_lines(sys.stdin):
-        # Chainkey is learned through handling handshake_encrypt for producing "empty"
-        final_chainkey, empty_key = None, None
+        # Set when the traffic secrets are known for this side.
+        traffic_initiator_id, traffic_responder_id = None, None
 
         # Debug
         #print(what, args)
 
         if what == TYPE_BLAKE2S_HMAC:
             kdf.update(args["inlen"], args["key"])
-            # Heuristics: after learning Responder ID and one KDF, the next KDF
-            # results in the final chainkey and and empty_key
-            if responder_id is not None and args["inlen"] == 1 + 32:
-                response_kdf_seen += 1
-                if response_kdf_seen == 2:
-                    final_chainkey, empty_key = kdf.keys()
 
         if what == TYPE_HANDSHAKE_ENCRYPT:
-            src_len = args["src_len"]
-            # The KDF that generates the AEAD key takes the DH shared secret as
-            # input data (which is 32 bytes).
-            if kdf.input_length != 32:
-                _logger.warn("Unexpected KDF input size %d for encryption\n",
-                        kdf.input_length)
-                continue
-            if src_len == SIZE_STATIC:
-                static_key = kdf.key()
-            elif src_len == SIZE_TIMESTAMP:
-                timestamp_key = kdf.key()
-            elif src_len == SIZE_EMPTY:
-                # TODO is this for responder only?
-                # This chained secret is used as key for deriving traffic keys
-                #final_chainkey, empty_key = kdf.keys()
-                _logger.warn("Unimplemented handshake response create")
+            plain_len, key = args["src_len"], args["key"]
+            if plain_len == SIZE_STATIC:
+                static_key_I = key
+            elif plain_len == SIZE_TIMESTAMP:
+                timestamp_key_I = key
+                # Remember context for linking static+timestamp to Initiator.
+                context_is_responder = False
+            elif plain_len == SIZE_EMPTY:
+                empty_key_R = key
+                # Remember context for traffic secrets and linking empty to R.
+                context_is_responder = True
             else:
-                _logger.warn("Unhandled handshake_encrypt(src_len=%d)", src_len)
+                _logger.warn("Unhandled handshake_encrypt(src_len=%d)", args["src_len"])
 
-        if final_chainkey:
-            # Chainkey was learned above while deriving secrets for encrypting "empty"
-            if responder_id is None:
-                _logger.warn("Unknown Responder ID, cannot derive traffic secrets")
-                continue
-            initiator_id = map_ri[responder_id]
-            # Note: RID was previously mapped via IID in TYPE_I_RESPONDER_ID
-            print_key(KEY_EMPTY, responder_id, empty_key)
-            # Expand traffic keys for decryption
-            initiator_key, responder_key = Kdf.hkdf_expand(final_chainkey)
-            print_key(KEY_TRAFFIC, initiator_id, initiator_key)
-            print_key(KEY_TRAFFIC, responder_id, responder_key)
-            response_kdf_seen = 0
-            responder_id = None
+        if what == TYPE_HANDSHAKE_DECRYPT:
+            plain_len, key = args["src_len"] - 16, args["key"]
+            if plain_len == SIZE_STATIC:
+                print_key(KEY_STATIC, initiator_id_R, key)
+            elif plain_len == SIZE_TIMESTAMP:
+                print_key(KEY_TIMESTAMP, initiator_id_R, key)
+            elif plain_len == SIZE_EMPTY:
+                # Chain Key for traffic secrets should be available now.
+                traffic_initiator_id, traffic_responder_id = initiator_id_I, responder_id_I
+                print_key(KEY_EMPTY, initiator_id_I, key)
+                initiator_id_I, responder_id_I = None, None
+            else:
+                _logger.warn("Unhandled handshake_decrypt(src_len=%d)", args["src_len"])
+
+        # Begin of received response processing by Initiator
+        if what == TYPE_CONSUME_RESPONSE:
+            # Remember for traffic secrets (KDF) and empty decryption context.
+            initiator_id_I, responder_id_I = args["initiator"], args["responder"]
+
+        # Begin of received initiation processing by Responder
+        if what == TYPE_CONSUME_INITIATION:
+            # Remember for linking all (traffic) secrets at responder side.
+            initiator_id_R = args["initiator"]
 
         # End of constructing an initiation message
         if what == TYPE_ID_INSERT:
-            initiator_id = args["id"]
-            print_key(KEY_STATIC, initiator_id, static_key)
-            print_key(KEY_TIMESTAMP, initiator_id, timestamp_key)
-            static_key, timestamp_key = None, None
+            sender_id = args["id"]
+            if context_is_responder is False:
+                # Initiator side
+                print_key(KEY_STATIC, sender_id, static_key_I)
+                print_key(KEY_TIMESTAMP, sender_id, timestamp_key_I)
+                static_key_I, timestamp_key_I = None, None
+            elif context_is_responder is True:
+                # Responder side
+                print_key(KEY_EMPTY, sender_id, empty_key_R)
+                # Chain Key for traffic secrets should be available now.
+                traffic_initiator_id, traffic_responder_id = initiator_id_R, sender_id
+                empty_key_R, initiator_id_R = None, None
+            else:
+                _logger.warn("Unknown side for Sender ID 0x%08x", sender_id)
+            context_is_responder = None
 
-        # Begin of received response processing
-        if what == TYPE_I_RESPONDER_ID:
-            if args["mask"] != INDEX_HASHTABLE_HANDSHAKE:
-                # Skip other users of index_hashtable_lookup()
-                continue
-            initiator_id = args["id"]
-            response_kdf_seen = 0
-            responder_id = map_ir.get(initiator_id)
-            if responder_id is None:
-                _logger.warn("Unknown Responder ID for response to 0x%08x", initiator_id)
-
-        if what in (TYPE_I_IDS, TYPE_R_IDS):
-            iid, rid = args["initiator"], args["responder"]
-            map_ir[iid] = rid
-            map_ri[rid] = iid
+        # If traffic secret can be derived now, do so
+        if traffic_initiator_id is not None:
+            assert traffic_responder_id is not None
+            final_chainkey = kdf.key()
+            initiator_key, responder_key = Kdf.hkdf_expand(final_chainkey)
+            print_key(KEY_TRAFFIC, traffic_initiator_id, initiator_key)
+            print_key(KEY_TRAFFIC, traffic_responder_id, responder_key)
 
 
 if __name__ == '__main__':
