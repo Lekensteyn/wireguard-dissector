@@ -204,6 +204,7 @@ class Kdf(object):
 
 
 def print_key(what, sender_id, key):
+    # Note: KEY_TRAFFIC is linked by Receiver ID (not Sender ID)
     if sender_id is None:
         _logger.warn("Unknown Sender ID for %s\n", what)
         return
@@ -238,8 +239,8 @@ def main():
     responder_id_I, initiator_id_I = None, None
 
     for what, args in parse_lines(sys.stdin):
-        # Set when the traffic secrets are known for this side.
-        traffic_initiator_id, traffic_responder_id = None, None
+        # The decryption keys for the receiving side (if known at this point).
+        traffic_receiver_id_I, traffic_receiver_id_R = None, None
 
         # Debug
         #print(what, args)
@@ -270,7 +271,7 @@ def main():
                 print_key(KEY_TIMESTAMP, initiator_id_R, key)
             elif plain_len == SIZE_EMPTY:
                 # Chain Key for traffic secrets should be available now.
-                traffic_initiator_id, traffic_responder_id = initiator_id_I, responder_id_I
+                traffic_receiver_id_R, traffic_receiver_id_I = responder_id_I, initiator_id_I
                 print_key(KEY_EMPTY, responder_id_I, key)
                 initiator_id_I, responder_id_I = None, None
             else:
@@ -298,19 +299,19 @@ def main():
                 # Responder side
                 print_key(KEY_EMPTY, sender_id, empty_key_R)
                 # Chain Key for traffic secrets should be available now.
-                traffic_initiator_id, traffic_responder_id = initiator_id_R, sender_id
+                traffic_receiver_id_R, traffic_receiver_id_I = sender_id, initiator_id_R
                 empty_key_R, initiator_id_R = None, None
             else:
                 _logger.warn("Unknown side for Sender ID 0x%08x", sender_id)
             context_is_responder = None
 
         # If traffic secret can be derived now, do so
-        if traffic_initiator_id is not None:
-            assert traffic_responder_id is not None
+        if traffic_receiver_id_R is not None:
+            assert traffic_receiver_id_I is not None
             final_chainkey = kdf.key()
-            initiator_key, responder_key = Kdf.hkdf_expand(final_chainkey)
-            print_key(KEY_TRAFFIC, traffic_initiator_id, initiator_key)
-            print_key(KEY_TRAFFIC, traffic_responder_id, responder_key)
+            receive_key_R, receive_key_I = Kdf.hkdf_expand(final_chainkey)
+            print_key(KEY_TRAFFIC, traffic_receiver_id_R, receive_key_R)
+            print_key(KEY_TRAFFIC, traffic_receiver_id_I, receive_key_I)
 
 
 if __name__ == '__main__':
