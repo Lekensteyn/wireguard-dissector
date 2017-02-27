@@ -82,7 +82,9 @@ end
 --
 -- Decryption helpers (glue)
 --
-local fromhex = Struct.fromhex
+local function base64_decode(text)
+    return ByteArray.new(text, true):base64_decode():raw()
+end
 local gcrypt
 do
     local ok, res = pcall(require, "luagcrypt")
@@ -115,21 +117,30 @@ local function load_keys(keylog, filename)
         if not keylog[v] then keylog[v] = {} end
     end
 
-    -- Read lines of the format "<type> <peer-id> <hex-encoded key>" where:
-    -- "<type>" is one of the key types, "STAT", "TIME", etc. (see KEY_* above),
-    -- "<peer-id>" is the 32-bit Sender/Data Receiver ID (e.g. 0x12345678) and
-    -- "<hex-encoded key>" is the hex-encoded 32-byte key.  Unrecognized lines
-    -- (such as empty lines and lines starting with "#" are ignored).
+    -- Read lines of the format:
+    -- "<type> <sender-id> <base64-key> <base64-aad>" for handshake secrets or
+    -- "<receiver-id> <base64-key>" for traffic secrets where:
+    --
+    -- <type> is one of the key types ("STAT", "TIME", "EMPTY"),
+    -- <sender-id> and <receiver-id> are 32-bit IDs (e.g. 0x12345678),
+    -- <base64-key> is the base64-encoded symmetric key (32 bytes),
+    -- <base64-aad> is the base64-encoded additional data (32 bytes).
+    -- Unrecognized lines (empty lines and lines starting with "#") are ignored.
     while true do
         local line = f:read()
         if not line then break end  -- break on EOF
-        local what, peer_id, key = string.match(line, "^(%u+) (0x%x+) (%x+)")
+
+        -- First try to find traffic secrets, else try handshake secrets.
+        local what = KEY_TRAFFIC, aad
+        local peer_id, key = string.match(line, "^(0x%x+) ([%w/+=]+)$")
+        if not key then
+            what, peer_id, key, aad =
+                string.match(line, "^(%u+) (0x%x+) ([%w/+=]+) ([%w/+=]+)$")
+        end
         if what and keylog[what] then
-            -- optional authenticated additional data
-            local aad = string.match(line, "%x+", #what + #peer_id + #key + 4)
-            if aad then aad = fromhex(aad) end
             peer_id = tonumber(peer_id)
-            key = fromhex(key)
+            key = base64_decode(key)
+            if aad then aad = base64_decode(aad) end
             keylog[what][peer_id] = {key, aad}
         end
     end

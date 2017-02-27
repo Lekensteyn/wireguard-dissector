@@ -2,6 +2,7 @@
 # Post-processes traces and produce a suitable keylog file.
 # Requires Python 3.4 or newer (due to HMAC with Blake2s)
 import argparse
+import base64
 import hashlib
 import hmac
 import logging
@@ -217,11 +218,13 @@ def print_key(what, sender_id, key, aad=None):
     if not key:
         _logger.warn("Unknown key for %s with ID 0x%08x\n", what, sender_id)
         return
+    encode = lambda data: base64.b64encode(data).decode('utf8')
     if aad:
-        print("%s 0x%08x %s %s" % (what, sender_id, key.hex(), aad.hex()))
+        print("%s 0x%08x %s %s" % (what, sender_id, encode(key), encode(aad)))
     else:
+        assert what == KEY_TRAFFIC
         # No AAD for traffic secrets
-        print("%s 0x%08x %s" % (what, sender_id, key.hex()))
+        print("0x%08x %s" % (sender_id, encode(key)))
 
 
 parser = argparse.ArgumentParser()
