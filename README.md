@@ -76,6 +76,11 @@ needs to be patched though (for at least version 0.0.20170214):
     sed "s;#include \".*/;#include \"${wgkdir}/;" config.c -i
     KCFLAGS=-I${wgkdir}/compat/siphash/include make
 
+## License
+Copyright (C) 2017 Peter Wu (peter@lekensteyn.nl)
+
+This project is licensed under the GPLv2 (or any later version) license.
+
  [1]: https://www.wireguard.io/
  [2]: https://github.com/Lekensteyn/luagcrypt
  [3]: https://www.kernel.org/doc/Documentation/trace/kprobetrace.txt

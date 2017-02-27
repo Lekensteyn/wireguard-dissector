@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 # Post-processes traces and produce a suitable keylog file.
 # Requires Python 3.4 or newer (due to HMAC with Blake2s)
+#
+# Copyright (C) 2017 Peter Wu <peter@lekensteyn.nl>
+#
+# This work is licensed under the terms of GPLv2 (or any later version).
+#
 import argparse
 import base64
 import hashlib

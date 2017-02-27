@@ -1,3 +1,10 @@
+--
+-- Wireshark dissector for the WireGuard tunnel protocol
+-- Copyright (C) 2017 Peter Wu <peter@lekensteyn.nl>
+--
+-- This work is licensed under the terms of GPLv2 (or any later version).
+--
+
 local proto_wg = Proto.new("wg", "WireGuard")
 local type_names = {
     [1] = "Handshake Initiation",

@@ -1,5 +1,8 @@
 #!/bin/bash
 # Enable extraction of WireGuard keys
+# Copyright (C) 2017 Peter Wu <peter@lekensteyn.nl>
+#
+# This work is licensed under the terms of GPLv2 (or any later version).
 #
 # wgkey0: sender ID                                 id=%x
 # wgkey1: key for static/timestamp/empty (encr)     src_len=%d key1..4=%x aad1..4=%x
