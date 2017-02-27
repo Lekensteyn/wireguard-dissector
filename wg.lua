@@ -109,7 +109,7 @@ local function load_keys(keylog, filename)
     local f, err = io.open(filename)
     if not f then
         -- Opening the keylog file failed, return the error
-        return err
+        return "Cannot load keylog file: " .. err
     end
 
     -- Populate subtables.
@@ -186,11 +186,11 @@ local function decrypt_aead(key, counter, encrypted, tag, aad)
     local ok, plain, calctag = pcall(decrypt_aead_gcrypt, key, counter, encrypted, aad)
     if ok then
         -- Return result and signal error if authentication failed.
-        local auth_err = calctag ~= tag and "Authentication tag mismatch, expected " .. Struct.tohex(calctag)
+        local auth_err = calctag ~= tag and "Authentication tag mismatch"
         return plain, auth_err
     else
         -- Return error
-        return nil, plain
+        return nil, "Decryption failed: " .. plain
     end
 end
 --
@@ -221,21 +221,22 @@ local function dissect_aead(t, tree, datalen, fieldname, counter, key_type, peer
         while keylog_file and keylog_file ~= "" do
             -- Try to load key
             key, aad, err = load_key(keylog_cache, keylog_file, key_type, peer_id)
-            if not key then break end
+            if not key then
+                err = err or "Cannot find key in keylog file"
+                break
+            end
 
             -- Decrypt and authenticate the buffer
             local encr_data = encr_tvb and tvb_bytes(encr_tvb) or ""
             local decrypted
             decrypted, err = decrypt_aead(key, counter, encr_data, tvb_bytes(atag_tvb), aad)
-            if not decrypted then break end
+            -- Skip further processing if authentication tag failed
+            if not decrypted or err then break end
             if decrypted ~= "" then
-                -- TODO hide this if auth tag is bad
                 local decr_tvb = ByteArray.new(decrypted, true)
                     :tvb("Decrypted " .. fieldname)
                 subtree:add(F[fieldname .. "_data"], decr_tvb())
             end
-            -- Skip further processing if authentication tag failed
-            if err then break end
 
             -- TODO return tvb to caller?
 
