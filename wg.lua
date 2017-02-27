@@ -78,6 +78,16 @@ end
 -- Decryption helpers (glue)
 --
 local fromhex = Struct.fromhex
+local gcrypt
+do
+    local ok, res = pcall(require, "luagcrypt")
+    if ok then
+        gcrypt = res
+    else
+        report_failure("wg.lua: cannot load Luagcrypt, decryption is unavailable.\n" .. res)
+    end
+end
+
 --
 -- Decryption helpers (independent of Wireshark)
 --
@@ -110,16 +120,20 @@ local function load_keys(keylog, filename)
         if not line then break end  -- break on EOF
         local what, peer_id, key = string.match(line, "^(%u+) (0x%x+) (%x+)")
         if what and keylog[what] then
+            -- optional authenticated additional data
+            local aad = string.match(line, "%x+", #what + #peer_id + #key + 4)
+            if aad then aad = fromhex(aad) end
             peer_id = tonumber(peer_id)
             key = fromhex(key)
-            keylog[what][peer_id] = key
+            keylog[what][peer_id] = {key, aad}
         end
     end
     f:close()
 end
 
--- Try to load a key for the given sender, returning the key (possibly nil if
--- there is none) or (if an error occurred) nil followed by the error message.
+-- Try to load a key for the given sender, returning the key and additional
+-- authenticated data (possibly nil if there are none) or two nils followed by
+-- an error message (if an IO error occured).
 local function load_key(keylog, filename, key_type, peer_id)
     local keylog_sub = keylog[key_type]
     if not keylog_sub then
@@ -130,10 +144,38 @@ local function load_key(keylog, filename, key_type, peer_id)
         -- Key ID is not yet known, try to load from file.
         local err = load_keys(keylog, filename)
         if err then
-            return nil, err
+            return nil, nil, err
         end
     end
-    return keylog_sub[peer_id]
+    local result = keylog_sub[peer_id]
+    if result then return table.unpack(result) end
+end
+
+local function decrypt_aead_gcrypt(key, counter, encrypted, aad)
+    local cipher = gcrypt.Cipher(gcrypt.CIPHER_CHACHA20, gcrypt.CIPHER_MODE_POLY1305)
+    cipher:setkey(key)
+    local nonce
+    if counter == 0 then
+        nonce = string.rep("\0", 12)
+    else
+        -- UInt64 type was passed in
+        nonce = Struct.pack("<I4E", 0, counter)
+    end
+    cipher:setiv(nonce)
+    if aad then cipher:authenticate(aad) end
+    local plain = cipher:decrypt(encrypted)
+    return plain, cipher:gettag()
+end
+local function decrypt_aead(key, counter, encrypted, tag, aad)
+    local ok, plain, calctag = pcall(decrypt_aead_gcrypt, key, counter, encrypted, aad)
+    if ok then
+        -- Return result and signal error if authentication failed.
+        local auth_err = calctag ~= tag and "Authentication tag mismatch, expected " .. Struct.tohex(calctag)
+        return plain, auth_err
+    else
+        -- Return error
+        return nil, plain
+    end
 end
 --
 -- End decryption helpers.
@@ -142,24 +184,44 @@ end
 -- Remember previously read keys
 local keylog_cache = {}
 
-local function dissect_aead(t, tree, datalen, fieldname, key_type, peer_id)
+local function dissect_aead(t, tree, datalen, fieldname, counter, key_type, peer_id)
     -- Builds a tree:
     -- * Foo (Encrypted)
     --   * Ciphertext
-    --   * XXX add decrypted field (or show it after the subtree)
     --   * Auth Tag
     local subtree = tree:add(F[fieldname], t:peek(datalen + AUTH_TAG_LENGTH))
+    local encr_tvb, atag_tvb
     if datalen > 0 then
         subtree:add(F[fieldname .. "_ciphertext"], t(datalen))
-        -- Try to decrypt
+        encr_tvb = t.tvb
+    end
+    subtree:add(F[fieldname .. "_atag"], t(AUTH_TAG_LENGTH))
+    atag_tvb = t.tvb
+
+    -- Try to decrypt and authenticate if possible.
+    if gcrypt then
         local key, err, keylog_file
         keylog_file = proto_wg.prefs.keylog_file
         while keylog_file and keylog_file ~= "" do
             -- Try to load key
-            key, err = load_key(keylog_cache, keylog_file, key_type, peer_id)
+            key, aad, err = load_key(keylog_cache, keylog_file, key_type, peer_id)
             if not key then break end
 
-            -- TODO decryption
+            -- Decrypt and authenticate the buffer
+            local encr_data = encr_tvb and encr_tvb:raw() or ""
+            local decrypted
+            decrypted, err = decrypt_aead(key, counter, encr_data, atag_tvb:raw(), aad)
+            if not decrypted then break end
+            if decrypted ~= "" then
+                -- TODO hide this if auth tag is bad
+                local decr_tvb = ByteArray.new(decrypted, true)
+                    :tvb("Decrypted " .. fieldname)
+                subtree:add(F[fieldname .. "_data"], decr_tvb())
+            end
+            -- Skip further processing if authentication tag failed
+            if err then break end
+
+            -- TODO return tvb to caller?
 
             break
         end
@@ -168,7 +230,6 @@ local function dissect_aead(t, tree, datalen, fieldname, key_type, peer_id)
             subtree:add_proto_expert_info(efs.decryption_error, err)
         end
     end
-    subtree:add(F[fieldname .. "_atag"], t(AUTH_TAG_LENGTH))
 end
 
 function dissect_initiator(tvb, pinfo, tree)
@@ -179,8 +240,8 @@ function dissect_initiator(tvb, pinfo, tree)
     local sender_id = t.tvb:le_uint()
     pinfo.cols.info:append(string.format(", sender=0x%08X", sender_id))
     tree:add(F.ephemeral,   t(32))
-    dissect_aead(t, tree, 32, "static", KEY_STATIC, sender_id)
-    dissect_aead(t, tree, 12, "timestamp", KEY_TIMESTAMP, sender_id)
+    dissect_aead(t, tree, 32, "static", 0, KEY_STATIC, sender_id)
+    dissect_aead(t, tree, 12, "timestamp", 0, KEY_TIMESTAMP, sender_id)
     tree:add(F.mac1,        t(16))
     tree:add(F.mac2,        t(16))
     return t:offset()
@@ -196,7 +257,7 @@ function dissect_responder(tvb, pinfo, tree)
     tree:add_le(F.receiver, t(4))
     pinfo.cols.info:append(string.format(", receiver=0x%08X", t.tvb:le_uint()))
     tree:add(F.ephemeral,   t(32))
-    dissect_aead(t, tree, 0, "empty", KEY_EMPTY, sender_id)
+    dissect_aead(t, tree, 0, "empty", 0, KEY_EMPTY, sender_id)
     tree:add(F.mac1,        t(16))
     tree:add(F.mac2,        t(16))
     return t:offset()
@@ -221,7 +282,8 @@ function dissect_data(tvb, pinfo, tree)
     local receiver_id = t.tvb:le_uint()
     pinfo.cols.info:append(string.format(", receiver=0x%08X", receiver_id))
     tree:add_le(F.counter,  t(8))
-    pinfo.cols.info:append(string.format(", counter=%s", t.tvb:le_uint64()))
+    local counter = t.tvb:le_uint64()
+    pinfo.cols.info:append(string.format(", counter=%s", counter))
     local packet_length = tvb:len() - t:offset()
     if packet_length < AUTH_TAG_LENGTH then
         -- Should not happen, it is a malformed packet.
@@ -232,7 +294,7 @@ function dissect_data(tvb, pinfo, tree)
     if datalen > 0 then
         pinfo.cols.info:append(string.format(", datalen=%s", datalen))
     end
-    dissect_aead(t, tree, datalen, "packet", KEY_TRAFFIC, receiver_id)
+    dissect_aead(t, tree, datalen, "packet", counter, KEY_TRAFFIC, receiver_id)
     return t:offset()
 end
 
