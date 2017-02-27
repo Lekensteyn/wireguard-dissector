@@ -337,6 +337,8 @@ function dissect_data(tvb, pinfo, tree)
     local datalen = packet_length - AUTH_TAG_LENGTH
     if datalen > 0 then
         pinfo.cols.info:append(string.format(", datalen=%s", datalen))
+    else
+        pinfo.cols.info:append(", Keep-Alive")
     end
     subtree, subtvb = dissect_aead(t, tree, datalen, "packet", counter, KEY_TRAFFIC, receiver_id)
     return t:offset(), subtvb
