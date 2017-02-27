@@ -132,6 +132,16 @@ def parse_args_dict(text):
     return r
 
 
+def fixup_ints_to_bytes(args, name):
+    """Fixup the key, replacing integers key1..key4 by bytes "key"."""
+    if ("%s1" % name) in args:
+        keys = ["%s%d" % (name, i) for i in range(1, 4 + 1)]
+        values = [args[key] for key in keys]
+        args[name] = struct.pack('<QQQQ', *values)
+        for key in keys:
+            del args[key]
+
+
 def parse_lines(f):
     pattern = r'.*: (?P<key>wgkey[0-7]): \([^)]+\) (?P<args>.+)'
     for line in f:
@@ -142,12 +152,8 @@ def parse_lines(f):
             continue
         _logger.debug("Matched %s", m.groupdict())
         args = parse_args_dict(m.group("args"))
-        if 'key1' in args:
-            # Fixup the key, replacing integers key1..key4 by bytes "key"
-            args['key'] = struct.pack('<QQQQ',
-                    args['key1'], args['key2'], args['key3'], args['key4'])
-            for i in range(1, 4 + 1):
-                del args['key%d' % i]
+        fixup_ints_to_bytes(args, "key")
+        fixup_ints_to_bytes(args, "aad")
         yield m.group("key"), args
 
 
@@ -203,7 +209,7 @@ class Kdf(object):
         return t1, t2
 
 
-def print_key(what, sender_id, key):
+def print_key(what, sender_id, key, aad=None):
     # Note: KEY_TRAFFIC is linked by Receiver ID (not Sender ID)
     if sender_id is None:
         _logger.warn("Unknown Sender ID for %s\n", what)
@@ -211,7 +217,11 @@ def print_key(what, sender_id, key):
     if not key:
         _logger.warn("Unknown key for %s with ID 0x%08x\n", what, sender_id)
         return
-    print("%s 0x%08x %s" % (what, sender_id, key.hex()))
+    if aad:
+        print("%s 0x%08x %s %s" % (what, sender_id, key.hex(), aad.hex()))
+    else:
+        # No AAD for traffic secrets
+        print("%s 0x%08x %s" % (what, sender_id, key.hex()))
 
 
 parser = argparse.ArgumentParser()
@@ -230,8 +240,9 @@ def main():
     context_is_responder = None
 
     # Collected keys for both sides (at Initiator or Responder side)
-    static_key_I, timestamp_key_I = None, None
-    empty_key_R = None
+    static_key_I, static_aad_I = None, None
+    timestamp_key_I, timestamp_aad_I = None, None
+    empty_key_R, empty_aad_R = None, None
     traffic_keys_I, traffic_keys_R = None, None
 
     # Context for received message processing (at Initiator or Responder side)
@@ -249,30 +260,30 @@ def main():
             kdf.update(args["inlen"], args["key"])
 
         if what == TYPE_HANDSHAKE_ENCRYPT:
-            plain_len, key = args["src_len"], args["key"]
+            plain_len, key, aad = args["src_len"], args["key"], args["aad"]
             if plain_len == SIZE_STATIC:
-                static_key_I = key
+                static_key_I, static_aad_I = key, aad
             elif plain_len == SIZE_TIMESTAMP:
-                timestamp_key_I = key
+                timestamp_key_I, timestamp_aad_I = key, aad
                 # Remember context for linking static+timestamp to Initiator.
                 context_is_responder = False
             elif plain_len == SIZE_EMPTY:
-                empty_key_R = key
+                empty_key_R, empty_aad_R = key, aad
                 # Remember context for traffic secrets and linking empty to R.
                 context_is_responder = True
             else:
                 _logger.warn("Unhandled handshake_encrypt(src_len=%d)", args["src_len"])
 
         if what == TYPE_HANDSHAKE_DECRYPT:
-            plain_len, key = args["src_len"] - 16, args["key"]
+            plain_len, key, aad = args["src_len"] - 16, args["key"], args["aad"]
             if plain_len == SIZE_STATIC:
-                print_key(KEY_STATIC, initiator_id_R, key)
+                print_key(KEY_STATIC, initiator_id_R, key, aad)
             elif plain_len == SIZE_TIMESTAMP:
-                print_key(KEY_TIMESTAMP, initiator_id_R, key)
+                print_key(KEY_TIMESTAMP, initiator_id_R, key, aad)
             elif plain_len == SIZE_EMPTY:
                 # Chain Key for traffic secrets should be available now.
                 traffic_receiver_id_R, traffic_receiver_id_I = responder_id_I, initiator_id_I
-                print_key(KEY_EMPTY, responder_id_I, key)
+                print_key(KEY_EMPTY, responder_id_I, key, aad)
                 initiator_id_I, responder_id_I = None, None
             else:
                 _logger.warn("Unhandled handshake_decrypt(src_len=%d)", args["src_len"])
@@ -292,12 +303,12 @@ def main():
             sender_id = args["id"]
             if context_is_responder is False:
                 # Initiator side
-                print_key(KEY_STATIC, sender_id, static_key_I)
-                print_key(KEY_TIMESTAMP, sender_id, timestamp_key_I)
+                print_key(KEY_STATIC, sender_id, static_key_I, static_aad_I)
+                print_key(KEY_TIMESTAMP, sender_id, timestamp_key_I, timestamp_aad_I)
                 static_key_I, timestamp_key_I = None, None
             elif context_is_responder is True:
                 # Responder side
-                print_key(KEY_EMPTY, sender_id, empty_key_R)
+                print_key(KEY_EMPTY, sender_id, empty_key_R, empty_aad_R)
                 # Chain Key for traffic secrets should be available now.
                 traffic_receiver_id_R, traffic_receiver_id_I = sender_id, initiator_id_R
                 empty_key_R, initiator_id_R = None, None

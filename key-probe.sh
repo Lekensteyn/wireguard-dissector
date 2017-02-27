@@ -2,8 +2,8 @@
 # Enable extraction of WireGuard keys
 #
 # wgkey0: sender ID                                 id=%x
-# wgkey1: key for static/timestamp/empty (encr)     src_len=%d key1..4=%x
-# wgkey7: key for static/timestamp/empty (decr)     src_len=%d key1..4=%x
+# wgkey1: key for static/timestamp/empty (encr)     src_len=%d key1..4=%x aad1..4=%x
+# wgkey7: key for static/timestamp/empty (decr)     src_len=%d key1..4=%x aad1..4=%x
 # wgkey2: traffic secret base key (need inlen=0)    inlen=%d key1..4=%x
 # wgkey3: cookie key                                key1..4=%x
 # wgkey5: link sender+receiver (initiator consume)  initiator=%x responder=%x
@@ -12,6 +12,7 @@
 #
 # See also Documentation/trace/kprobetrace.txt
 # Registers for args on x86-64: di si dx cx r8 r9
+# Arguments 7, 8, etc. are on stack, +8 +0x10 etc. (+0 is return address)
 
 set -x -e
 
@@ -45,14 +46,18 @@ echo >> /sys/kernel/debug/tracing/kprobe_events \
 #  12 for timestamp         (noise_handshake_create_initiation)
 #  0  for empty             (noise_handshake_create_response)
 # Key length for ChaCha20-Poly1305 is always 32 bytes.
+# arg4 (%cx) is aad, arg7 (+8($stack)) is key
+keyarg='key1=+0(+8($stack)) key2=+8(+8($stack)) key3=+0x10(+8($stack)) key4=+0x18(+8($stack))'
+aadarg='aad1=+0(%cx) aad2=+8(%cx) aad3=+0x10(%cx) aad4=+0x18(%cx)'
 echo >> /sys/kernel/debug/tracing/kprobe_events \
-    'p:wgkey1 wireguard:chacha20poly1305_encrypt src_len=%dx:u64 key1=+0(%cx) key2=+8(%cx) key3=+0x10(%cx) key4=+0x18(%cx)'
+    "p:wgkey1 wireguard:chacha20poly1305_encrypt src_len=%dx:u64 $keyarg $aadarg"
 
 # noise_handshake_consume_initiation / noise_handshake_consume_response
 # -> handshake_decrypt
 #    -> chacha20poly1305_decrypt
+# arg4 (%cx) is aad, arg7 (+8($stack)) is key
 echo >> /sys/kernel/debug/tracing/kprobe_events \
-    'p:wgkey7 wireguard:chacha20poly1305_decrypt src_len=%dx:u64 key1=+0(%cx) key2=+8(%cx) key3=+0x10(%cx) key4=+0x18(%cx)'
+    "p:wgkey7 wireguard:chacha20poly1305_decrypt src_len=%dx:u64 $keyarg $aadarg"
 
 # Grab keys for KDF and remember input data length for context.
 # noise_handshake_begin_session
@@ -72,8 +77,9 @@ echo >> /sys/kernel/debug/tracing/kprobe_events \
 # TODO grab Cookie secret XXX untested
 # cookie_message_create
 # -> xchacha20poly1305_encrypt
-echo >> /sys/kernel/debug/tracing/kprobe_events \
-    'p:wgkey3 wireguard:xchacha20poly1305_encrypt key1=+0(%cx) key2=+8(%cx) key3=+0x10(%cx) key4=+0x18(%cx)'
+# arg4 (%cx) is aad, arg6 (%r9) is nonce, arg7 (+8($stack)) is key
+#echo >> /sys/kernel/debug/tracing/kprobe_events \
+#    'p:wgkey3 wireguard:xchacha20poly1305_encrypt TODO'
 
 echo 1 | tee /sys/kernel/debug/tracing/events/kprobes/wgkey*/enable >/dev/null
 
