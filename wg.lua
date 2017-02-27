@@ -89,7 +89,11 @@ local gcrypt
 do
     local ok, res = pcall(require, "luagcrypt")
     if ok then
-        gcrypt = res
+        if res.CIPHER_MODE_POLY1305 then
+            gcrypt = res
+        else
+            report_failure("wg.lua: Libgcrypt 1.7 or newer is required for decryption")
+        end
     else
         report_failure("wg.lua: cannot load Luagcrypt, decryption is unavailable.\n" .. res)
     end
