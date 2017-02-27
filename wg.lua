@@ -74,6 +74,11 @@ function next_tvb(tvb)
     })
 end
 
+-- Gets the bytes within a TvbRange
+local function tvb_bytes(tvbrange)
+    return tvbrange:raw(tvbrange:offset(), tvbrange:len())
+end
+
 --
 -- Decryption helpers (glue)
 --
@@ -208,9 +213,9 @@ local function dissect_aead(t, tree, datalen, fieldname, counter, key_type, peer
             if not key then break end
 
             -- Decrypt and authenticate the buffer
-            local encr_data = encr_tvb and encr_tvb:raw() or ""
+            local encr_data = encr_tvb and tvb_bytes(encr_tvb) or ""
             local decrypted
-            decrypted, err = decrypt_aead(key, counter, encr_data, atag_tvb:raw(), aad)
+            decrypted, err = decrypt_aead(key, counter, encr_data, tvb_bytes(atag_tvb), aad)
             if not decrypted then break end
             if decrypted ~= "" then
                 -- TODO hide this if auth tag is bad
