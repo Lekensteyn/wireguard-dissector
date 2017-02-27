@@ -4,8 +4,11 @@ protocol.
 
 Requirements:
 
- - Wireshark 2.0.2 or newer.
- - [luagcrypt][2] for decryption support.
+ - Wireshark 2.0.2 or newer (tested with Wireshark 2.3.x).
+ - [luagcrypt][2] and Libgcrypt 1.7 for (optional) decryption support.
+
+The plan is to eventually rewrite this prototype in a dissector that is included
+with the main Wireshark sources.
 
 ## Installation
 Locate the Wireshark configuration directory (either `~/.wireshark` or
@@ -42,7 +45,7 @@ Next, obtain the trace output and extract keys from it. One approach, read once:
     sudo cat /sys/kernel/debug/tracing/trace > trace.txt
     ./key-extract.py < trace.txt > trace.keys
 
-To continuously keep the keys file updated:
+To continuously update the keylog file (useful for live captures):
 
     sudo cat /sys/kernel/debug/tracing/trace_pipe | ./key-extract.py > trace.keys
 
@@ -59,8 +62,8 @@ If you have a suitable kernel and its kernel headers, follow either example in
 the following sections.
 
 ### From tarball
-At least with version 0.0.20170214 you need to add an additional include
-directory:
+For versions before 0.0.20170214-1-g1c0ee32, you need to add an additional
+include directory:
 
     cd contrib/examples/extract-keys
     KCFLAGS=-I$PWD/../../../src/compat/siphash/include make
