@@ -271,7 +271,7 @@ def main():
             elif plain_len == SIZE_EMPTY:
                 # Chain Key for traffic secrets should be available now.
                 traffic_initiator_id, traffic_responder_id = initiator_id_I, responder_id_I
-                print_key(KEY_EMPTY, initiator_id_I, key)
+                print_key(KEY_EMPTY, responder_id_I, key)
                 initiator_id_I, responder_id_I = None, None
             else:
                 _logger.warn("Unhandled handshake_decrypt(src_len=%d)", args["src_len"])
