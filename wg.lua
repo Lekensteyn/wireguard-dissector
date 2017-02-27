@@ -10,6 +10,9 @@ local F = {
     reserved    = ProtoField.none("wg.reserved", "Reserved"),
     sender      = ProtoField.uint32("wg.sender", "Sender", base.HEX),
     ephemeral   = ProtoField.bytes("wg.ephemeral", "Ephemeral"),
+    static_data = ProtoField.bytes("wg.static_data", "Static"),
+    -- TODO split timestamp
+    timestamp_data = ProtoField.bytes("wg.timestamp_data", "Timestamp"),
     mac1        = ProtoField.bytes("wg.mac1", "mac1"),
     mac2        = ProtoField.bytes("wg.mac2", "mac2"),
     receiver    = ProtoField.uint32("wg.receiver", "Receiver", base.HEX),
@@ -22,7 +25,6 @@ local function add_aead_field(F, name, label)
     -- The "empty" field does not have data, do not bother adding fields for it.
     if name ~= "empty" then
         F[name .. "_ciphertext"] = ProtoField.bytes("wg." .. name .. ".ciphertext", "Ciphertext")
-        F[name .. "_data"] = ProtoField.bytes("wg." .. name .. ".data", label)
     end
     F[name .. "_atag"] = ProtoField.bytes("wg." .. name .. ".auth_tag", "Auth Tag")
 end
@@ -44,6 +46,8 @@ efs.bad_packet_length   = ProtoExpert.new("wg.expert.bad_packet_length", "Packet
 efs.decryption_error    = ProtoExpert.new("wg.expert.decryption_error", "Decryption error",
     expert.group.DECRYPTION, expert.severity.NOTE)
 proto_wg.experts = efs
+
+local ip_dissector = Dissector.get("ip")
 
 -- Length of AEAD authentication tag
 local AUTH_TAG_LENGTH = 16
@@ -204,13 +208,14 @@ end
 -- Remember previously read keys
 local keylog_cache = {}
 
+-- Dissect and try to decrypt, returning the tree and decrypted TVB
 local function dissect_aead(t, tree, datalen, fieldname, counter, key_type, peer_id)
     -- Builds a tree:
     -- * Foo (Encrypted)
     --   * Ciphertext
     --   * Auth Tag
     local subtree = tree:add(F[fieldname], t:peek(datalen + AUTH_TAG_LENGTH))
-    local encr_tvb, atag_tvb
+    local encr_tvb, atag_tvb, decr_tvb
     if datalen > 0 then
         subtree:add(F[fieldname .. "_ciphertext"], t(datalen))
         encr_tvb = t.tvb
@@ -236,14 +241,12 @@ local function dissect_aead(t, tree, datalen, fieldname, counter, key_type, peer
             decrypted, err = decrypt_aead(key, counter, encr_data, tvb_bytes(atag_tvb), aad)
             -- Skip further processing if authentication tag failed
             if not decrypted or err then break end
+
+            -- Decryption success, add the decrypted contents and return tvb
             if decrypted ~= "" then
-                local decr_tvb = ByteArray.new(decrypted, true)
+                decr_tvb = ByteArray.new(decrypted, true)
                     :tvb("Decrypted " .. fieldname)
-                subtree:add(F[fieldname .. "_data"], decr_tvb())
             end
-
-            -- TODO return tvb to caller?
-
             break
         end
         -- If any decryption error occurred, show it.
@@ -251,18 +254,26 @@ local function dissect_aead(t, tree, datalen, fieldname, counter, key_type, peer
             subtree:add_proto_expert_info(efs.decryption_error, err)
         end
     end
+    return subtree, decr_tvb
 end
 
 function dissect_initiator(tvb, pinfo, tree)
     local t = next_tvb(tvb)
+    local subtree, subtvb
     tree:add(F.type,        t(1))
     tree:add(F.reserved,    t(3))
     tree:add_le(F.sender,   t(4))
     local sender_id = t.tvb:le_uint()
     pinfo.cols.info:append(string.format(", sender=0x%08X", sender_id))
     tree:add(F.ephemeral,   t(32))
-    dissect_aead(t, tree, 32, "static", 0, KEY_STATIC, sender_id)
-    dissect_aead(t, tree, 12, "timestamp", 0, KEY_TIMESTAMP, sender_id)
+    subtree, subtvb = dissect_aead(t, tree, 32, "static", 0, KEY_STATIC, sender_id)
+    if subtvb then
+        tree:add(F.static_data, subtvb())
+    end
+    subtree, subtvb = dissect_aead(t, tree, 12, "timestamp", 0, KEY_TIMESTAMP, sender_id)
+    if subtvb then
+        tree:add(F.timestamp_data, subtvb())
+    end
     tree:add(F.mac1,        t(16))
     tree:add(F.mac2,        t(16))
     return t:offset()
@@ -270,6 +281,7 @@ end
 
 function dissect_responder(tvb, pinfo, tree)
     local t = next_tvb(tvb)
+    local subtree, subtvb
     tree:add(F.type,        t(1))
     tree:add(F.reserved,    t(3))
     tree:add_le(F.sender,   t(4))
@@ -291,12 +303,14 @@ function dissect_cookie(tvb, pinfo, tree)
     tree:add_le(F.receiver, t(4))
     pinfo.cols.info:append(string.format(", receiver=0x%08X", t.tvb:le_uint()))
     tree:add(F.nonce,       t(24))
+    -- TODO handle cookie (need to update key-probe.sh/key-extract.sh too)
     dissect_aead(t, tree, 16, "cookie")
     return t:offset()
 end
 
 function dissect_data(tvb, pinfo, tree)
     local t = next_tvb(tvb)
+    local subtree, subtvb
     tree:add(F.type,        t(1))
     tree:add(F.reserved,    t(3))
     tree:add_le(F.receiver, t(4))
@@ -315,8 +329,8 @@ function dissect_data(tvb, pinfo, tree)
     if datalen > 0 then
         pinfo.cols.info:append(string.format(", datalen=%s", datalen))
     end
-    dissect_aead(t, tree, datalen, "packet", counter, KEY_TRAFFIC, receiver_id)
-    return t:offset()
+    subtree, subtvb = dissect_aead(t, tree, datalen, "packet", counter, KEY_TRAFFIC, receiver_id)
+    return t:offset(), subtvb
 end
 
 local types = {
@@ -338,8 +352,15 @@ function proto_wg.dissector(tvb, pinfo, tree)
     pinfo.cols.protocol = "WireGuard"
     pinfo.cols.info = type_names[type_val]
     local subtree = tree:add(proto_wg, tvb())
-    local success, ret = pcall(subdissector, tvb, pinfo, subtree)
+    local success, ret, next_tvb = pcall(subdissector, tvb, pinfo, subtree)
     if success then
+        if next_tvb then
+            local err
+            success, err = pcall(ip_dissector, next_tvb, pinfo, tree)
+            if not success then
+                subtree:add_proto_expert_info(efs.error, err)
+            end
+        end
         return ret
     else
         -- An error has occurred... Do not propagate it since Wireshark would
