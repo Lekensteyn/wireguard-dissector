@@ -308,8 +308,9 @@ def main():
         # If traffic secret can be derived now, do so
         if traffic_receiver_id_R is not None:
             assert traffic_receiver_id_I is not None
-            final_chainkey = kdf.key()
-            receive_key_R, receive_key_I = Kdf.hkdf_expand(final_chainkey)
+            final_chainkey = kdf.key(0)
+            prk = blake2s_hmac(final_chainkey, b'')
+            receive_key_R, receive_key_I = Kdf.hkdf_expand(prk)
             print_key(KEY_TRAFFIC, traffic_receiver_id_R, receive_key_R)
             print_key(KEY_TRAFFIC, traffic_receiver_id_I, receive_key_I)
 
