@@ -9,10 +9,15 @@ Requirements:
 
 ## Installation
 Locate the Wireshark configuration directory (either `~/.wireshark` or
-`~/.config/wireshark`). Create the `plugins` subdirectory and add:
+`~/.config/wireshark`). Create the `plugins` subdirectory and add `wg.lua` (from
+this project).
 
- - `wg.lua` (from this project)
- - `luagcrypt.so` (from the [luagcrypt][2] project).
+For decryption support, you must also install [luagcrypt][2]. Once you have
+built that native library, install the resulting `luagcrypt.so` to
+`/usr/lib/lua/5.2/luagcrypt.so`. Alternatively, set the environment variable
+`LUA_CPATH=/path/to/luagcrypt/?.so` (including the `/?.so` suffix). You will
+also need to obtain a keylog file (see the next sections) and configure it at
+the WG protocol preferences.
 
 To check whether it is installed correctly, run `tshark -G protocols | grep wg`.
 
@@ -20,9 +25,32 @@ Since WireGuard does not have a default port number, it is recommended to enable
 the UDP protocol preference *Try heuristic sub-dissectors first* (via the menu
 Edit → Preferences, Protocols → UDP).
 
-TODO decryption is not implemented yet.
+## Obtaining handshake and traffic secrets through key-probe.sh and key-extract.py
+Authenticated decryption of handshake fields and traffic data requires keys
+which can be extracted from a host using `key-probe.sh` (included with this
+project). This script sets tracepoints (using [*kprobes*][3]) which hooks on
+WireGuard functions, allowing it to intercept keys and contextual information
+(Sender and Receiver IDs).
 
-## Obtaining secrets through extract-keys
+It requires a kernel with `CONFIG_KPROBE_EVENT=y` (most distros satisfy this
+requirement) with WireGuard loaded. Run `./key-probe.sh` as root to get started.
+It will print the commands that were executed (and exit with non-zero exit code
+if any step failed).
+
+Next, obtain the trace output and extract keys from it. One approach, read once:
+
+    sudo cat /sys/kernel/debug/tracing/trace > trace.txt
+    ./key-extract.py < trace.txt > trace.keys
+
+To continuously keep the keys file updated:
+
+    sudo cat /sys/kernel/debug/tracing/trace_pipe | ./key-extract.py > trace.keys
+
+To stop logging more keys, disable the tracepoints with:
+
+    sudo ./key-noprobe.sh
+
+## Obtaining traffic secrets through extract-keys
 The `extract-keys` utility included with WireGuard can be used to extract keys
 from kernel memory.  This requires the `CONFIG_DEVKMEM=y` option which is often
 disabled on distribution kernels (like for Arch Linux and Debian).
@@ -50,3 +78,4 @@ needs to be patched though (for at least version 0.0.20170214):
 
  [1]: https://www.wireguard.io/
  [2]: https://github.com/Lekensteyn/luagcrypt
+ [3]: https://www.kernel.org/doc/Documentation/trace/kprobetrace.txt
