@@ -149,14 +149,14 @@ def fixup_ints_to_bytes(args, name):
 
 
 def parse_lines(f):
-    pattern = r'.*: (?P<key>wgkey[0-7]): \([^)]+\) (?P<args>.+)'
-    for line in f:
+    pattern = r'.* (?P<time>\d+\.\d+): (?P<key>wgkey[0-7]): \((?P<func>[^+]+)[^)]+\) (?P<args>.+)'
+    for lineno, line in enumerate(f, 1):
         line = line.strip()
         m = re.match(pattern, line)
         if not m:
             _logger.debug("Skipping %s", line)
             continue
-        _logger.debug("Matched %s", m.groupdict())
+        _logger.debug("Matched line %d: %s", lineno, m.groupdict())
         args = parse_args_dict(m.group("args"))
         fixup_ints_to_bytes(args, "key")
         fixup_ints_to_bytes(args, "aad")
@@ -318,6 +318,9 @@ def main():
                 # Responder side
                 print_key(KEY_EMPTY, sender_id, empty_key_R, empty_aad_R)
                 # Chain Key for traffic secrets should be available now.
+                if initiator_id_R is None:
+                    _logger.debug("Traffic key for Sender ID 0x%08x is known,"
+                                  " but receiver ID is unknown", sender_id)
                 traffic_receiver_id_R, traffic_receiver_id_I = sender_id, initiator_id_R
                 empty_key_R, initiator_id_R = None, None
             else:
@@ -326,12 +329,12 @@ def main():
 
         # If traffic secret can be derived now, do so
         if traffic_receiver_id_R is not None:
-            assert traffic_receiver_id_I is not None
             final_chainkey = kdf.key(0)
             prk = blake2s_hmac(final_chainkey, b'')
             receive_key_R, receive_key_I = Kdf.hkdf_expand(prk)
             print_key(KEY_TRAFFIC, traffic_receiver_id_R, receive_key_R)
-            print_key(KEY_TRAFFIC, traffic_receiver_id_I, receive_key_I)
+            if traffic_receiver_id_I:
+                print_key(KEY_TRAFFIC, traffic_receiver_id_I, receive_key_I)
 
 
 if __name__ == '__main__':
