@@ -19,6 +19,9 @@
 
 set -x -e
 
+# If wireguard is a built-in, there is no kernel module.
+[ -e /sys/module/wireguard ] && MOD=wireguard: || MOD=
+
 # Disable old kprobes first
 echo 0 | tee /sys/kernel/debug/tracing/events/kprobes/wgkey*/enable &>/dev/null || :
 
@@ -29,15 +32,15 @@ echo 0 | tee /sys/kernel/debug/tracing/events/kprobes/wgkey*/enable &>/dev/null 
 #   Initiator Sender ID (noise_handshake_create_initiation)
 #   Responder Sender ID (noise_handshake_create_response)
 echo > /sys/kernel/debug/tracing/kprobe_events \
-    'r:wgkey0 wireguard:index_hashtable_insert id=$retval:x32'
+    'r:wgkey0 '$MOD'index_hashtable_insert id=$retval:x32'
 
 # Find link between Initiator and Responder IDs
 # noise_handshake_consume_response(msg, ...)
 # noise_handshake_consume_initiation(msg, ...)
 echo >> /sys/kernel/debug/tracing/kprobe_events \
-    'p:wgkey5 wireguard:noise_handshake_consume_response initiator=+8(%di):x32 responder=+4(%di):x32'
+    'p:wgkey5 '$MOD'noise_handshake_consume_response initiator=+8(%di):x32 responder=+4(%di):x32'
 echo >> /sys/kernel/debug/tracing/kprobe_events \
-    'p:wgkey6 wireguard:noise_handshake_consume_initiation initiator=+4(%di):x32'
+    'p:wgkey6 '$MOD'noise_handshake_consume_initiation initiator=+4(%di):x32'
 
 
 # Set new kprobe
@@ -53,14 +56,14 @@ echo >> /sys/kernel/debug/tracing/kprobe_events \
 keyarg='key1=+0(+8($stack)) key2=+8(+8($stack)) key3=+0x10(+8($stack)) key4=+0x18(+8($stack))'
 aadarg='aad1=+0(%cx) aad2=+8(%cx) aad3=+0x10(%cx) aad4=+0x18(%cx)'
 echo >> /sys/kernel/debug/tracing/kprobe_events \
-    "p:wgkey1 wireguard:chacha20poly1305_encrypt src_len=%dx:u64 $keyarg $aadarg"
+    "p:wgkey1 ${MOD}chacha20poly1305_encrypt src_len=%dx:u64 $keyarg $aadarg"
 
 # noise_handshake_consume_initiation / noise_handshake_consume_response
 # -> handshake_decrypt
 #    -> chacha20poly1305_decrypt
 # arg4 (%cx) is aad, arg7 (+8($stack)) is key
 echo >> /sys/kernel/debug/tracing/kprobe_events \
-    "p:wgkey7 wireguard:chacha20poly1305_decrypt src_len=%dx:u64 $keyarg $aadarg"
+    "p:wgkey7 ${MOD}chacha20poly1305_decrypt src_len=%dx:u64 $keyarg $aadarg"
 
 # Grab keys for KDF and remember input data length for context.
 # noise_handshake_begin_session
@@ -75,14 +78,14 @@ echo >> /sys/kernel/debug/tracing/kprobe_events \
 # Unfortunately kretprobes cannot be used to access argument registers (out).
 # Alternative idea: capture input 'key' and derive others from key with inlen=1
 echo >> /sys/kernel/debug/tracing/kprobe_events \
-    'p:wgkey2 wireguard:blake2s_hmac inlen=%r8:u64 key1=+0(%dx) key2=+8(%dx) key3=+0x10(%dx) key4=+0x18(%dx)'
+    'p:wgkey2 '$MOD'blake2s_hmac inlen=%r8:u64 key1=+0(%dx) key2=+8(%dx) key3=+0x10(%dx) key4=+0x18(%dx)'
 
 # TODO grab Cookie secret XXX untested
 # cookie_message_create
 # -> xchacha20poly1305_encrypt
 # arg4 (%cx) is aad, arg6 (%r9) is nonce, arg7 (+8($stack)) is key
 #echo >> /sys/kernel/debug/tracing/kprobe_events \
-#    'p:wgkey3 wireguard:xchacha20poly1305_encrypt TODO'
+#    'p:wgkey3 '$MOD'xchacha20poly1305_encrypt TODO'
 
 echo 1 | tee /sys/kernel/debug/tracing/events/kprobes/wgkey*/enable >/dev/null
 
