@@ -83,6 +83,7 @@ needs to be patched though (for at least version 0.0.20170214):
 Copyright (C) 2017 Peter Wu (peter@lekensteyn.nl)
 
 This project is licensed under the GPLv2 (or any later version) license.
+See [LICENSE.txt](LICENSE.txt) for more details.
 
  [1]: https://www.wireguard.io/
  [2]: https://github.com/Lekensteyn/luagcrypt
