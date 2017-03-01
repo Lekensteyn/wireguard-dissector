@@ -94,7 +94,15 @@ echo > /sys/kernel/debug/tracing/trace
 
 # Show command to read trace
 cat <<EOF
+Probes are in place, ready to start tapping!
+
+# If you observe missed events, try enlarging the trace buffer, e.g. for 50MiB:
+# (note: the actual memory usage is this number multiplied by #cpus)
+echo > /sys/kernel/debug/tracing/buffer_size_kb 51200
+
+# Read events (without clearing previous events):
 cat /sys/kernel/debug/tracing/trace
+
 # read indefinitely and clear buffer
 cat /sys/kernel/debug/tracing/trace_pipe
 EOF
