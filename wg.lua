@@ -256,6 +256,7 @@ local function dissect_aead(t, tree, datalen, fieldname, counter, key_type, peer
                 decr_tvb = ByteArray.new(decrypted, true)
                     :tvb("Decrypted " .. fieldname)
             end
+            subtree:add("(authentication tag verified)")
             break
         end
         -- If any decryption error occurred, show it.
