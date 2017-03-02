@@ -148,8 +148,9 @@ local function load_keys(keylog, filename)
         if not line then break end  -- break on EOF
 
         -- First try to find traffic secrets, else try handshake secrets.
-        local what = KEY_TRAFFIC, aad
+        local what = KEY_TRAFFIC
         local peer_id, key = string.match(line, "^(0x%x+) ([%w/+=]+)$")
+        local aad
         if not key then
             what, peer_id, key, aad =
                 string.match(line, "^(%u+) (0x%x+) ([%w/+=]+) ([%w/+=]+)$")
@@ -234,7 +235,7 @@ local function dissect_aead(t, tree, datalen, fieldname, counter, key_type, peer
 
     -- Try to decrypt and authenticate if possible.
     if gcrypt then
-        local key, err, keylog_file
+        local key, aad, err, keylog_file
         keylog_file = proto_wg.prefs.keylog_file
         while keylog_file and keylog_file ~= "" do
             -- Try to load key
