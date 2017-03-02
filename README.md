@@ -2,13 +2,15 @@
 Wireshark dissector (written in Lua) for dissecting the [WireGuard][1] tunneling
 protocol.
 
+![Screenshot of Wireshark with WireGuard traffic](wireshark-wg.png)
+
 Requirements:
 
  - Wireshark 2.0.2 or newer (tested with Wireshark 2.3.x).
  - [luagcrypt][2] and Libgcrypt 1.7 for (optional) decryption support.
 
-The plan is to eventually rewrite this prototype in a dissector that is included
-with the main Wireshark sources.
+The plan is to eventually rewrite this prototype into a dissector that is
+included with the main Wireshark sources.
 
 ## Installation
 Locate the Wireshark configuration directory (either `~/.wireshark` or
@@ -23,6 +25,9 @@ also need to obtain a keylog file (see the next sections) and configure it at
 the WG protocol preferences.
 
 To check whether it is installed correctly, run `tshark -G protocols | grep wg`.
+You can also try the example packet capture
+[pcaps/8-trace.pcap](pcaps/8-trace.pcap) and its corresponding keylog file
+[pcaps/8-trace.keys](pcaps/8-trace.keys) for testing.
 
 Since WireGuard does not have a default port number, it is recommended to enable
 the UDP protocol preference *Try heuristic sub-dissectors first* (via the menu
