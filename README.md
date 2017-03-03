@@ -12,22 +12,20 @@ Requirements:
 The plan is to eventually rewrite this prototype into a dissector that is
 included with the main Wireshark sources.
 
-## Installation
-Locate the Wireshark configuration directory (either `~/.wireshark` or
-`~/.config/wireshark`). Create the `plugins` subdirectory and add `wg.lua` (from
-this project).
+## Installation and usage
+Install [wg.lua](wg.lua) in the [Wireshark plugins folder][4] (usually
+`~/.config/wireshark/plugins/` or `~/.wireshark/plugins/`).
+For decryption support, install [luagcrypt][2] in the Lua library path
+(usually `/usr/lib/lua/5.2/luagcrypt.so`).
 
-For decryption support, you must also install [luagcrypt][2]. Once you have
-built that native library, install the resulting `luagcrypt.so` to
-`/usr/lib/lua/5.2/luagcrypt.so`. Alternatively, set the environment variable
-`LUA_CPATH=/path/to/luagcrypt/?.so` (including the `/?.so` suffix). You will
-also need to obtain a keylog file (see the next sections) and configure it at
-the WG protocol preferences.
+Now try the sample packet capture [pcaps/8-trace.pcap](pcaps/8-trace.pcap)
+and its corresponding keylog file [pcaps/8-trace.keys](pcaps/8-trace.keys)
+(configure via *Protocol Preferences* → *Keylog file*).
 
-To check whether it is installed correctly, run `tshark -G protocols | grep wg`.
-You can also try the example packet capture
-[pcaps/8-trace.pcap](pcaps/8-trace.pcap) and its corresponding keylog file
-[pcaps/8-trace.keys](pcaps/8-trace.keys) for testing.
+As alternative to installing files globally, copy luagcrypt.so to the current
+working directory and run:
+
+    wireshark -Xlua_script:wg.lua -r pcaps/8-trace.pcap -owg.keylog_file:pcaps/8-trace.keys
 
 Since WireGuard does not have a default port number, it is recommended to enable
 the UDP protocol preference *Try heuristic sub-dissectors first* (via the menu
@@ -74,3 +72,4 @@ See [LICENSE.txt](LICENSE.txt) for more details.
  [1]: https://www.wireguard.io/
  [2]: https://github.com/Lekensteyn/luagcrypt
  [3]: https://www.kernel.org/doc/Documentation/trace/kprobetrace.txt
+ [4]: https://www.wireshark.org/docs/wsug_html_chunked/ChAppFilesConfigurationSection.html
