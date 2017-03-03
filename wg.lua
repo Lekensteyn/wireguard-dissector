@@ -18,8 +18,9 @@ local F = {
     sender      = ProtoField.uint32("wg.sender", "Sender", base.HEX),
     ephemeral   = ProtoField.bytes("wg.ephemeral", "Ephemeral"),
     static_data = ProtoField.bytes("wg.static_data", "Static"),
-    -- TODO split timestamp
-    timestamp_data = ProtoField.bytes("wg.timestamp_data", "Timestamp"),
+    timestamp_tai64_label = ProtoField.bytes("wg.timestamp_tai64_label", "TAI64 Label"),
+    timestamp_nano = ProtoField.uint32("wg.timestamp_nano", "Nanoseconds"),
+    timestamp_value = ProtoField.absolute_time("wg.timestamp_value", "Timestamp", base.UTC),
     mac1        = ProtoField.bytes("wg.mac1", "mac1"),
     mac2        = ProtoField.bytes("wg.mac2", "mac2"),
     receiver    = ProtoField.uint32("wg.receiver", "Receiver", base.HEX),
@@ -90,6 +91,19 @@ end
 -- Gets the bytes within a TvbRange
 local function tvb_bytes(tvbrange)
     return tvbrange:raw(tvbrange:offset(), tvbrange:len())
+end
+
+-- Converts a TAI64 label to the seconds since the Unix epoch.
+-- See https://cr.yp.to/libtai/tai64.html
+local function tai64_to_unix(label)
+    local pow2_62 = UInt64(1):lshift(62)
+    if label < pow2_62 then
+        -- TODO this cannot be represented
+        return 0
+    else
+        -- TODO this can result in loss of precision
+        return (label - pow2_62):tonumber()
+    end
 end
 
 --
@@ -283,7 +297,13 @@ function dissect_initiator(tvb, pinfo, tree)
     end
     subtree, subtvb = dissect_aead(t, tree, 12, "timestamp", 0, KEY_TIMESTAMP, sender_id)
     if subtvb then
-        tree:add(F.timestamp_data, subtvb())
+        local time_t = next_tvb(subtvb)
+        subtree:add(F.timestamp_tai64_label, time_t(8))
+        local sec = tai64_to_unix(time_t.tvb:uint64())
+        subtree:add(F.timestamp_nano, time_t(4))
+        local ns = time_t.tvb:uint()
+        local time = NSTime.new(sec, ns)
+        tree:add(F.timestamp_value, subtvb(), time)
     end
     tree:add(F.mac1,        t(16))
     tree:add(F.mac2,        t(16))
