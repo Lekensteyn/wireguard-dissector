@@ -21,16 +21,14 @@ typedef struct {
  */
 typedef struct {
     wg_keypair_t    sender_static;
-    wg_keypair_t    receiver_static;
     wg_keypair_t    sender_ephemeral;
+    wg_key_t        receiver_static_public;
     wg_key_t        psk;            ///< externally supplied.
     // optimization: pre-expand MAC1 label for static keys
     wg_mac_t        sender_mac1_key;
     wg_mac_t        receiver_mac1_key;
 } wg_keys_t;
 
-// TODO define file format
-#if 0
 /**
  * Given some base64-encoded keys, derive all other required keys.
  */
@@ -38,11 +36,10 @@ gboolean
 wg_process_keys(
     wg_keys_t  *keys_out,
     const char *sender_static_private_str,
-    const char *receiver_static_private_str,
+    const char *receiver_static_public_str,
     const char *sender_ephemeral_private_str,
     const char *psk_str
 );
-#endif
 
 /**
  * Checks whether the given MAC1 is valid for the given message and pre-computed
@@ -63,6 +60,7 @@ gboolean
 wg_process_initiation(
     const guchar       *msg,
     guint               msg_len,
+    const wg_keys_t    *keys,
     wg_key_t          **static_public_i,
     guchar            **timestamp
 );

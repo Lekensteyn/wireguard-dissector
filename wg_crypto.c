@@ -5,7 +5,53 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+#include <string.h>
 #include "wg_crypto.h"
+#include <sodium.h>
+
+static gboolean
+decode_base64_key(wg_key_t *out, const char *str)
+{
+    gsize out_len;
+    gchar tmp[45];
+
+    if (strlen(str)+1 != sizeof(tmp)) {
+        return FALSE;
+    }
+    memcpy(tmp, str, sizeof(tmp));
+    g_base64_decode_inplace(tmp, &out_len);
+    if (out_len != sizeof(wg_key_t)) {
+        return FALSE;
+    }
+    memcpy((char *)out, tmp, sizeof(wg_key_t));
+    return TRUE;
+}
+
+static void
+priv_to_pub(wg_key_t *priv, wg_key_t *pub)
+{
+    crypto_scalarmult_base((guchar *)pub, (guchar *)priv);
+}
+
+gboolean
+wg_process_keys(
+    wg_keys_t  *keys_out,
+    const char *sender_static_private_str,
+    const char *receiver_static_public_str,
+    const char *sender_ephemeral_private_str,
+    const char *psk_str
+)
+{
+    memset(keys_out, 0, sizeof(wg_keys_t));
+    if (!decode_base64_key(&keys_out->sender_static.private_key, sender_static_private_str) ||
+        !decode_base64_key(&keys_out->sender_ephemeral.private_key, sender_ephemeral_private_str) ||
+        !decode_base64_key(&keys_out->receiver_static_public, receiver_static_public_str) ||
+        !decode_base64_key(&keys_out->psk, psk_str)) {
+        return FALSE;
+    }
+    priv_to_pub(&keys_out->sender_static.private_key, &keys_out->sender_static.public_key);
+    priv_to_pub(&keys_out->sender_ephemeral.private_key, &keys_out->sender_ephemeral.public_key);
+}
 
 /**
  * Find the correct keys from the initiation message msg1 as follows:
@@ -50,6 +96,7 @@ gboolean
 wg_process_initiation(
     const guchar       *msg,
     guint               msg_len,
+    const wg_keys_t    *keys,
     wg_key_t          **static_public_i,
     guchar            **timestamp
 )
