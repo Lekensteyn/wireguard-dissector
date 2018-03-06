@@ -29,7 +29,14 @@ typedef struct {
     // optimization: pre-expand MAC1 label for static keys
     wg_hash_t       sender_mac1_key;
     wg_hash_t       receiver_mac1_key;
+    wg_key_t        static_dh_secret;
 } wg_keys_t;
+
+/**
+ * Initialize WG decryption. Returns FALSE if decryption is not possible.
+ */
+gboolean
+wg_decrypt_init(void);
 
 /**
  * Given some base64-encoded keys, derive all other required keys.

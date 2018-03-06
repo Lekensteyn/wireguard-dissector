@@ -67,6 +67,9 @@ int main()
         g_assert_not_reached();
     }
 
+    r = wg_decrypt_init();
+    g_assert(r);
+
     r = wg_process_keys(&initiator_keys, initiator_secrets[0], initiator_secrets[1], initiator_secrets[2], initiator_secrets[3]);
     g_assert(r);
     r = wg_process_keys(&responder_keys, responder_secrets[0], responder_secrets[1], responder_secrets[2], responder_secrets[3]);
@@ -84,6 +87,6 @@ int main()
 
     keys = &initiator_keys;
     r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, keys, &Spub_i, &timestamp);
-    g_print("ret = %d\n", r);
+    g_assert(r);
     return 0;
 }

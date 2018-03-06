@@ -8,7 +8,26 @@
 #include <string.h>
 #include "wg_crypto.h"
 #include <sodium.h>
+#include "wsgcrypt_compat.h" /* for HKDF */
 #include <gcrypt.h>
+
+/** Wire serialization of initiation message. */
+typedef struct {
+    guchar  type;
+    guchar  reserved[3];
+    guchar  sender[4];
+    guchar  ephemeral[32];
+    guchar  static_public[32+16];
+    guchar  timestamp[12+16];
+    guchar  mac1[16];
+    guchar  mac2[16];
+} wg_initiation_message_t;
+G_STATIC_ASSERT(sizeof(wg_initiation_message_t) == 148);
+
+#define WG_RESPONSE_LENGTH              92
+
+/** Hash(CONSTRUCTION), initialized by wg_decrypt_init. */
+static wg_hash_t hash_of_construction;
 
 static gboolean
 decode_base64_key(wg_key_t *out, const char *str)
@@ -32,6 +51,28 @@ static void
 priv_to_pub(const wg_key_t *priv, wg_key_t *pub)
 {
     crypto_scalarmult_base((guchar *)pub, (const guchar *)priv);
+}
+
+static void
+dh_x25519(wg_key_t *shared_secret, const wg_key_t *priv, const wg_key_t *pub)
+{
+    int r;
+    r = crypto_scalarmult((guchar *)shared_secret, (const guchar *)priv, (const guchar *)pub);
+    /* Assume private key is valid. */
+    g_assert(r == 0);
+}
+
+gboolean
+wg_decrypt_init(void)
+{
+    if (gcry_md_test_algo(GCRY_MD_BLAKE2S_128) != 0 ||
+        gcry_md_test_algo(GCRY_MD_BLAKE2S_256) != 0) {
+        return FALSE;
+    }
+    static const char construction[] = "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s";
+    gcry_md_hash_buffer(GCRY_MD_BLAKE2S_256, &hash_of_construction,
+            construction, strlen(construction));
+    return TRUE;
 }
 
 /**
@@ -81,11 +122,6 @@ wg_process_keys(
     const char *psk_str
 )
 {
-    if (gcry_md_test_algo(GCRY_MD_BLAKE2S_256) != 0) {
-        // TODO do this MUCH earlier (before even trying to enable decryption).
-        return FALSE;
-    }
-
     memset(keys_out, 0, sizeof(wg_keys_t));
     if (!decode_base64_key(&keys_out->sender_static.private_key, sender_static_private_str) ||
         !decode_base64_key(&keys_out->sender_ephemeral.private_key, sender_ephemeral_private_str) ||
@@ -98,6 +134,8 @@ wg_process_keys(
 
     wg_mac1_key(&keys_out->sender_static.public_key, &keys_out->sender_mac1_key);
     wg_mac1_key(&keys_out->receiver_static_public, &keys_out->receiver_mac1_key);
+    dh_x25519(&keys_out->static_dh_secret, &keys_out->receiver_static_public,
+            &keys_out->sender_static.private_key);
     return TRUE;
 }
 
@@ -117,10 +155,10 @@ wg_check_mac1(
 
     switch (msg[0]) {
     case 1: // Initiation
-        hashed_length = 148 - 32;
+        hashed_length = offsetof(wg_initiation_message_t, mac1);
         break;
     case 2: // Response
-        hashed_length = 92 - 32;
+        hashed_length = WG_RESPONSE_LENGTH - 32;
         break;
     default:
         g_assert_not_reached(); // TODO remove after test cases are done
@@ -177,6 +215,37 @@ wg_check_mac1(
  * Spub_i and Spub_r were used (display it in the proto tree).
  */
 
+/**
+ * Update the new chained hash value: h = Hash(h || data).
+ */
+static void
+wg_mix_hash(wg_hash_t *h, const void *data, guint data_len)
+{
+    gcry_md_hd_t hd;
+    if (gcry_md_open(&hd, GCRY_MD_BLAKE2S_256, 0)) {
+        g_assert_not_reached();
+    }
+    gcry_md_write(hd, h, sizeof(wg_hash_t));
+    gcry_md_write(hd, data, data_len);
+    memcpy(h, gcry_md_read(hd, 0), sizeof(wg_hash_t));
+    gcry_md_close(hd);
+}
+
+/**
+ * Computes KDF_n(key, input) where n is the number of derived keys.
+ */
+static void
+wg_kdf(const wg_key_t *key, const void *input, guint input_len, guint n, wg_key_t *out)
+{
+    guint8          prk[32];    /* Blake2s_256 hash output. */
+    gcry_error_t    err;
+    err = hkdf_extract(GCRY_MD_BLAKE2S_256, (const guint8 *)key,
+            sizeof(wg_key_t), input, input_len, prk);
+    g_assert(err == 0);
+    err = hkdf_expand(GCRY_MD_BLAKE2S_256, prk, sizeof(prk), NULL, 0, (guint8 *)out, 32 * n);
+    g_assert(err == 0);
+}
+
 gboolean
 wg_process_initiation(
     const guchar       *msg,
@@ -186,26 +255,65 @@ wg_process_initiation(
     guchar            **timestamp
 )
 {
+    if (msg_len != sizeof(wg_initiation_message_t)) {
+        g_assert_not_reached(); // TODO remove once tests are complete.
+        return FALSE;
+    }
+    const wg_initiation_message_t *m = (const wg_initiation_message_t *)msg;
+    const wg_key_t *static_public_responder;
+
     // Inputs:
     //  Spub_r, Spub_i, Spriv_i, Epriv_i    if kType = I
     //  Spub_r, Spub_i, Spriv_r             if kType = R
-    //
+    // Inputs (precomputed):
+    //  Spub_r,                  Epriv_i    if kType = I
+    //  Spub_r,         Spriv_r             if kType = R
+    //  (Spub_i is supposed to be checked against extracted "static" field)
+    gboolean is_initiator_keys = TRUE;
+    if (is_initiator_keys) {
+        static_public_responder = &keys->receiver_static_public;
+    } else {
+        /* keys from responder */
+        static_public_responder = &keys->sender_static.public_key;
+    }
+
+    wg_hash_t c_and_k[2], h;
+    wg_hash_t *c = &c_and_k[0], *k = &c_and_k[1];
     // c = Hash(CONSTRUCTION)
+    memcpy(c, hash_of_construction, sizeof(wg_hash_t));
     // h = Hash(c || msg.sender)
+    memcpy(h, c, sizeof(*c));
+    wg_mix_hash(&h, m->sender, sizeof(m->sender));
     // h = Hash(h || Spub_r)
+    wg_mix_hash(&h, static_public_responder, sizeof(wg_key_t));
     // c = KDF1(c, msg.ephemeral)
+    wg_kdf(c, m->ephemeral, sizeof(m->ephemeral), 1, c);
     // h = Hash(h || msg.ephemeral)
+    wg_mix_hash(&h, m->ephemeral, sizeof(m->ephemeral));
     //  dh1 = DH(Epriv_i, Spub_r)           if kType = I
     //  dh1 = DH(Spriv_r, msg.ephemeral)    if kType = R
+    wg_key_t dh1;
+    if (is_initiator_keys) {
+        dh_x25519(&dh1, &keys->sender_ephemeral.private_key, static_public_responder);
+    } else {
+        dh_x25519(&dh1, &keys->sender_static.private_key, (const wg_key_t *)&m->ephemeral);
+    }
     // (c, k) = KDF2(c, dh1)
+    wg_kdf(c, dh1, sizeof(dh1), 2, c_and_k);
     // Spub_i = AEAD-Decrypt(k, 0, msg.static, h)
+    // TODO decrypt using k
     //  -- now check that Spub_i matches in keys "k"
     // h = Hash(h || msg.static)
+    wg_mix_hash(&h, m->static_public, sizeof(m->static_public));
     //  dh2 = DH(Spriv_i, Spub_r)           if kType = I
     //  dh2 = DH(Spriv_r, Spub_i)           if kType = R
     // (c, k) = KDF2(c, dh2)
+    wg_kdf(c, keys->static_dh_secret, sizeof(wg_key_t), 2, c_and_k);
     // timestamp = AEAD-Decrypt(k, 0, msg.timestamp, h)
+    // TODO decrypt timestamp using k
     // h = Hash(h || msg.timestamp)
+    wg_mix_hash(&h, m->timestamp, sizeof(m->timestamp));
+    // TODO save (h, k) context for responder message processing
     g_assert(!"Not fully implemented");
     return TRUE;
 }
