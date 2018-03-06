@@ -57,11 +57,10 @@ static const char *responder_secrets[] = {
 
 int main()
 {
-    wg_key_t   *Spub_i = NULL;
-    guchar     *timestamp = NULL;
+    wg_key_t    Spub_i = { 0 };
+    guchar      timestamp[12] = { 0 };
     gboolean    r;
     wg_keys_t   initiator_keys, responder_keys;
-    wg_keys_t  *keys;
 
     if (!gcry_check_version(NULL)) {
         g_assert_not_reached();
@@ -85,8 +84,10 @@ int main()
     r = wg_check_mac1(pkt_wg_responder, pkt_wg_responder_len, &initiator_keys.sender_mac1_key);
     g_assert(r);
 
-    keys = &initiator_keys;
-    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, keys, &Spub_i, &timestamp);
+    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &initiator_keys, TRUE, &Spub_i, timestamp);
+    g_assert(r);
+
+    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &responder_keys, FALSE, &Spub_i, timestamp);
     g_assert(r);
     return 0;
 }

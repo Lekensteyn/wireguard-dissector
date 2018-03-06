@@ -11,14 +11,16 @@
 #include "wsgcrypt_compat.h" /* for HKDF */
 #include <gcrypt.h>
 
+#define AUTH_TAG_LENGTH     16
+
 /** Wire serialization of initiation message. */
 typedef struct {
     guchar  type;
     guchar  reserved[3];
     guchar  sender[4];
     guchar  ephemeral[32];
-    guchar  static_public[32+16];
-    guchar  timestamp[12+16];
+    guchar  static_public[32+AUTH_TAG_LENGTH];
+    guchar  timestamp[12+AUTH_TAG_LENGTH];
     guchar  mac1[16];
     guchar  mac2[16];
 } wg_initiation_message_t;
@@ -246,13 +248,42 @@ wg_kdf(const wg_key_t *key, const void *input, guint input_len, guint n, wg_key_
     g_assert(err == 0);
 }
 
+/**
+ * Decrypt ciphertext using the ChaCha20-Poly1305 cipher. The auth tag must be
+ * included with the ciphertext.
+ */
+static gboolean
+aead_decrypt(const wg_key_t *key, guint64 counter, const guchar *ctext, guint ctext_len, guchar *out, guint out_len)
+{
+    gcry_cipher_hd_t    hd;
+    gcry_error_t        err;
+    guchar              nonce[12] = { 0 };
+
+    g_assert(ctext_len >= AUTH_TAG_LENGTH);
+    ctext_len -= AUTH_TAG_LENGTH;
+    const guchar *auth_tag = ctext + ctext_len;
+
+    err = gcry_cipher_open(&hd, GCRY_CIPHER_CHACHA20, GCRY_CIPHER_MODE_POLY1305, 0);
+    if (err) {
+        return FALSE;
+    }
+    memcpy(nonce + 4, &counter, 8); // TODO fix for big endian
+    (err = gcry_cipher_setkey(hd, key, sizeof(*key))) == 0 &&
+    (err = gcry_cipher_setiv(hd, nonce, sizeof(nonce))) == 0 &&
+    (err = gcry_cipher_decrypt(hd, out, out_len, ctext, ctext_len)) == 0 &&
+    (err = gcry_cipher_checktag(hd, auth_tag, AUTH_TAG_LENGTH));
+    gcry_cipher_close(hd);
+    return err == 0;
+}
+
 gboolean
 wg_process_initiation(
     const guchar       *msg,
     guint               msg_len,
     const wg_keys_t    *keys,
-    wg_key_t          **static_public_i,
-    guchar            **timestamp
+    gboolean            is_initiator_keys,
+    wg_key_t           *static_public_i,
+    guchar              timestamp[12]
 )
 {
     if (msg_len != sizeof(wg_initiation_message_t)) {
@@ -269,7 +300,6 @@ wg_process_initiation(
     //  Spub_r,                  Epriv_i    if kType = I
     //  Spub_r,         Spriv_r             if kType = R
     //  (Spub_i is supposed to be checked against extracted "static" field)
-    gboolean is_initiator_keys = TRUE;
     if (is_initiator_keys) {
         static_public_responder = &keys->receiver_static_public;
     } else {
@@ -301,8 +331,12 @@ wg_process_initiation(
     // (c, k) = KDF2(c, dh1)
     wg_kdf(c, dh1, sizeof(dh1), 2, c_and_k);
     // Spub_i = AEAD-Decrypt(k, 0, msg.static, h)
-    // TODO decrypt using k
+    if (!aead_decrypt(k, 0, m->static_public, sizeof(m->static_public), (guchar *)static_public_i, sizeof(*static_public_i))) {
+        g_assert(!"static decryption failed"); // TODO remove once tests are complete.
+        return FALSE;
+    }
     //  -- now check that Spub_i matches in keys "k"
+    //  TODO perform this check (at caller?)
     // h = Hash(h || msg.static)
     wg_mix_hash(&h, m->static_public, sizeof(m->static_public));
     //  dh2 = DH(Spriv_i, Spub_r)           if kType = I
@@ -310,10 +344,12 @@ wg_process_initiation(
     // (c, k) = KDF2(c, dh2)
     wg_kdf(c, keys->static_dh_secret, sizeof(wg_key_t), 2, c_and_k);
     // timestamp = AEAD-Decrypt(k, 0, msg.timestamp, h)
-    // TODO decrypt timestamp using k
+    if (!aead_decrypt(k, 0, m->timestamp, sizeof(m->timestamp), timestamp, 12)) {
+        g_assert(!"timestamp decryption failed"); // TODO remove once tests are complete.
+        return FALSE;
+    }
     // h = Hash(h || msg.timestamp)
     wg_mix_hash(&h, m->timestamp, sizeof(m->timestamp));
     // TODO save (h, k) context for responder message processing
-    g_assert(!"Not fully implemented");
     return TRUE;
 }

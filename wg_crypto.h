@@ -71,6 +71,7 @@ wg_process_initiation(
     const guchar       *msg,
     guint               msg_len,
     const wg_keys_t    *keys,
-    wg_key_t          **static_public_i,
-    guchar            **timestamp
+    gboolean            is_initiator_keys,
+    wg_key_t           *static_public_i,
+    guchar              timestamp[12]
 );
