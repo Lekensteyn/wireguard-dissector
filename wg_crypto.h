@@ -8,7 +8,9 @@
 #include <glib.h>
 
 typedef guchar wg_key_t[32];
-/** MAC1 and MAC2 outputs (and MAC key). */
+/** Output size of the Hash function. */
+typedef guchar wg_hash_t[32];
+/** MAC1 and MAC2 outputs. */
 typedef guchar wg_mac_t[16];
 
 typedef struct {
@@ -25,8 +27,8 @@ typedef struct {
     wg_key_t        receiver_static_public;
     wg_key_t        psk;            ///< externally supplied.
     // optimization: pre-expand MAC1 label for static keys
-    wg_mac_t        sender_mac1_key;
-    wg_mac_t        receiver_mac1_key;
+    wg_hash_t       sender_mac1_key;
+    wg_hash_t       receiver_mac1_key;
 } wg_keys_t;
 
 /**
@@ -47,8 +49,9 @@ wg_process_keys(
  */
 gboolean
 wg_check_mac1(
-    const guchar   *msg,
-    const wg_mac_t *mac1_key
+    const guchar       *msg,
+    guint               msg_len,
+    const wg_hash_t    *mac1_key
 );
 
 /**

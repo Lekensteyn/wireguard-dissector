@@ -6,6 +6,7 @@
  */
 
 #include "wg_crypto.h"
+#include <gcrypt.h>
 
 // {{{ Test packets
 static unsigned char pkt_wg_initiation[] = {
@@ -62,9 +63,23 @@ int main()
     wg_keys_t   initiator_keys, responder_keys;
     wg_keys_t  *keys;
 
+    if (!gcry_check_version(NULL)) {
+        g_assert_not_reached();
+    }
+
     r = wg_process_keys(&initiator_keys, initiator_secrets[0], initiator_secrets[1], initiator_secrets[2], initiator_secrets[3]);
     g_assert(r);
     r = wg_process_keys(&responder_keys, responder_secrets[0], responder_secrets[1], responder_secrets[2], responder_secrets[3]);
+    g_assert(r);
+
+    r = wg_check_mac1(pkt_wg_initiation, pkt_wg_initiation_len, &initiator_keys.receiver_mac1_key);
+    g_assert(r);
+    r = wg_check_mac1(pkt_wg_initiation, pkt_wg_initiation_len, &responder_keys.sender_mac1_key);
+    g_assert(r);
+
+    r = wg_check_mac1(pkt_wg_responder, pkt_wg_responder_len, &responder_keys.receiver_mac1_key);
+    g_assert(r);
+    r = wg_check_mac1(pkt_wg_responder, pkt_wg_responder_len, &initiator_keys.sender_mac1_key);
     g_assert(r);
 
     keys = &initiator_keys;
