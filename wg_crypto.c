@@ -30,6 +30,7 @@ G_STATIC_ASSERT(sizeof(wg_initiation_message_t) == 148);
 
 /** Hash(CONSTRUCTION), initialized by wg_decrypt_init. */
 static wg_hash_t hash_of_construction;
+static const char wg_identifier[] = "WireGuard v1 zx2c4 Jason@zx2c4.com";
 
 static gboolean
 decode_base64_key(wg_key_t *out, const char *str)
@@ -136,8 +137,8 @@ wg_process_keys(
 
     wg_mac1_key(&keys_out->sender_static.public_key, &keys_out->sender_mac1_key);
     wg_mac1_key(&keys_out->receiver_static_public, &keys_out->receiver_mac1_key);
-    dh_x25519(&keys_out->static_dh_secret, &keys_out->receiver_static_public,
-            &keys_out->sender_static.private_key);
+    dh_x25519(&keys_out->static_dh_secret, &keys_out->sender_static.private_key,
+            &keys_out->receiver_static_public);
     return TRUE;
 }
 
@@ -253,7 +254,7 @@ wg_kdf(const wg_key_t *key, const void *input, guint input_len, guint n, wg_key_
  * included with the ciphertext.
  */
 static gboolean
-aead_decrypt(const wg_key_t *key, guint64 counter, const guchar *ctext, guint ctext_len, guchar *out, guint out_len)
+aead_decrypt(const wg_key_t *key, guint64 counter, const guchar *ctext, guint ctext_len, const guchar *aad, guint aad_len, guchar *out, guint out_len)
 {
     gcry_cipher_hd_t    hd;
     gcry_error_t        err;
@@ -270,6 +271,7 @@ aead_decrypt(const wg_key_t *key, guint64 counter, const guchar *ctext, guint ct
     memcpy(nonce + 4, &counter, 8); // TODO fix for big endian
     (err = gcry_cipher_setkey(hd, key, sizeof(*key))) == 0 &&
     (err = gcry_cipher_setiv(hd, nonce, sizeof(nonce))) == 0 &&
+    (err = gcry_cipher_authenticate(hd, aad, aad_len)) == 0 &&
     (err = gcry_cipher_decrypt(hd, out, out_len, ctext, ctext_len)) == 0 &&
     (err = gcry_cipher_checktag(hd, auth_tag, AUTH_TAG_LENGTH));
     gcry_cipher_close(hd);
@@ -311,9 +313,9 @@ wg_process_initiation(
     wg_hash_t *c = &c_and_k[0], *k = &c_and_k[1];
     // c = Hash(CONSTRUCTION)
     memcpy(c, hash_of_construction, sizeof(wg_hash_t));
-    // h = Hash(c || msg.sender)
+    // h = Hash(c || IDENTIFIER)
     memcpy(h, c, sizeof(*c));
-    wg_mix_hash(&h, m->sender, sizeof(m->sender));
+    wg_mix_hash(&h, wg_identifier, strlen(wg_identifier));
     // h = Hash(h || Spub_r)
     wg_mix_hash(&h, static_public_responder, sizeof(wg_key_t));
     // c = KDF1(c, msg.ephemeral)
@@ -331,7 +333,7 @@ wg_process_initiation(
     // (c, k) = KDF2(c, dh1)
     wg_kdf(c, dh1, sizeof(dh1), 2, c_and_k);
     // Spub_i = AEAD-Decrypt(k, 0, msg.static, h)
-    if (!aead_decrypt(k, 0, m->static_public, sizeof(m->static_public), (guchar *)static_public_i, sizeof(*static_public_i))) {
+    if (!aead_decrypt(k, 0, m->static_public, sizeof(m->static_public), h, sizeof(wg_hash_t), (guchar *)static_public_i, sizeof(*static_public_i))) {
         g_assert(!"static decryption failed"); // TODO remove once tests are complete.
         return FALSE;
     }
@@ -344,7 +346,7 @@ wg_process_initiation(
     // (c, k) = KDF2(c, dh2)
     wg_kdf(c, keys->static_dh_secret, sizeof(wg_key_t), 2, c_and_k);
     // timestamp = AEAD-Decrypt(k, 0, msg.timestamp, h)
-    if (!aead_decrypt(k, 0, m->timestamp, sizeof(m->timestamp), timestamp, 12)) {
+    if (!aead_decrypt(k, 0, m->timestamp, sizeof(m->timestamp), h, sizeof(wg_hash_t), timestamp, 12)) {
         g_assert(!"timestamp decryption failed"); // TODO remove once tests are complete.
         return FALSE;
     }
