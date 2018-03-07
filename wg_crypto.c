@@ -284,8 +284,8 @@ wg_process_initiation(
     guint               msg_len,
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
-    wg_key_t           *static_public_i,
-    guchar              timestamp[12]
+    wg_key_t           *static_public_i_out,
+    wg_tai64n_t        *timestamp_out
 )
 {
     if (msg_len != sizeof(wg_initiation_message_t)) {
@@ -333,7 +333,7 @@ wg_process_initiation(
     // (c, k) = KDF2(c, dh1)
     wg_kdf(c, dh1, sizeof(dh1), 2, c_and_k);
     // Spub_i = AEAD-Decrypt(k, 0, msg.static, h)
-    if (!aead_decrypt(k, 0, m->static_public, sizeof(m->static_public), h, sizeof(wg_hash_t), (guchar *)static_public_i, sizeof(*static_public_i))) {
+    if (!aead_decrypt(k, 0, m->static_public, sizeof(m->static_public), h, sizeof(wg_hash_t), (guchar *)static_public_i_out, sizeof(*static_public_i_out))) {
         g_assert(!"static decryption failed"); // TODO remove once tests are complete.
         return FALSE;
     }
@@ -346,7 +346,7 @@ wg_process_initiation(
     // (c, k) = KDF2(c, dh2)
     wg_kdf(c, keys->static_dh_secret, sizeof(wg_key_t), 2, c_and_k);
     // timestamp = AEAD-Decrypt(k, 0, msg.timestamp, h)
-    if (!aead_decrypt(k, 0, m->timestamp, sizeof(m->timestamp), h, sizeof(wg_hash_t), timestamp, 12)) {
+    if (!aead_decrypt(k, 0, m->timestamp, sizeof(m->timestamp), h, sizeof(wg_hash_t), (guchar *)timestamp_out, sizeof(*timestamp_out))) {
         g_assert(!"timestamp decryption failed"); // TODO remove once tests are complete.
         return FALSE;
     }

@@ -12,6 +12,8 @@ typedef guchar wg_key_t[32];
 typedef guchar wg_hash_t[32];
 /** MAC1 and MAC2 outputs. */
 typedef guchar wg_mac_t[16];
+/** Timestamp type (TAI64N). */
+typedef guchar wg_tai64n_t[12];
 
 typedef struct {
     wg_key_t    private_key;        ///< Externally supplied.
@@ -72,6 +74,6 @@ wg_process_initiation(
     guint               msg_len,
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
-    wg_key_t           *static_public_i,
-    guchar              timestamp[12]
+    wg_key_t           *static_public_i_out,
+    wg_tai64n_t        *timestamp_out
 );

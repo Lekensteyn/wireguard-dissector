@@ -58,7 +58,11 @@ static const char *responder_secrets[] = {
 int main()
 {
     wg_key_t    Spub_i = { 0 };
-    guchar      timestamp[12] = { 0 };
+    wg_tai64n_t timestamp = { 0 };
+    wg_tai64n_t timestamp_expected = {
+        0x40, 0x00, 0x00, 0x00,
+        0x5a, 0x99, 0x4d, 0x2c, 0x3b, 0x38, 0x94, 0x69
+    };
     gboolean    r;
     wg_keys_t   initiator_keys, responder_keys;
 
@@ -84,10 +88,14 @@ int main()
     r = wg_check_mac1(pkt_wg_responder, pkt_wg_responder_len, &initiator_keys.sender_mac1_key);
     g_assert(r);
 
-    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &initiator_keys, TRUE, &Spub_i, timestamp);
+    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &initiator_keys, TRUE, &Spub_i, &timestamp);
     g_assert(r);
+    g_assert(memcmp(Spub_i, initiator_keys.sender_static.public_key, sizeof(Spub_i)) == 0);
+    g_assert(memcmp(timestamp, timestamp_expected, sizeof(timestamp)) == 0);
 
-    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &responder_keys, FALSE, &Spub_i, timestamp);
+    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &responder_keys, FALSE, &Spub_i, &timestamp);
     g_assert(r);
+    g_assert(memcmp(Spub_i, responder_keys.receiver_static_public, sizeof(Spub_i)) == 0);
+    g_assert(memcmp(timestamp, timestamp_expected, sizeof(timestamp)) == 0);
     return 0;
 }
