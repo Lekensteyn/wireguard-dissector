@@ -41,7 +41,8 @@ G_STATIC_ASSERT(sizeof(wg_response_message_t) == 92);
 
 /** Hash(CONSTRUCTION), initialized by wg_decrypt_init. */
 static wg_hash_t hash_of_construction;
-static const char wg_identifier[] = "WireGuard v1 zx2c4 Jason@zx2c4.com";
+/** Hash(Hash(CONSTRUCTION) || IDENTIFIER), initialized by wg_decrypt_init. */
+static wg_hash_t hash_of_c_identifier;
 
 static gboolean
 decode_base64_key(wg_key_t *out, const char *str)
@@ -76,6 +77,8 @@ dh_x25519(wg_key_t *shared_secret, const wg_key_t *priv, const wg_key_t *pub)
     g_assert(r == 0);
 }
 
+static void wg_mix_hash(wg_hash_t *h, const void *data, guint data_len);
+
 gboolean
 wg_decrypt_init(void)
 {
@@ -87,6 +90,10 @@ wg_decrypt_init(void)
     static const char construction[] = "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s";
     gcry_md_hash_buffer(GCRY_MD_BLAKE2S_256, &hash_of_construction,
             construction, strlen(construction));
+
+    static const char wg_identifier[] = "WireGuard v1 zx2c4 Jason@zx2c4.com";
+    memcpy(&hash_of_c_identifier, hash_of_construction, sizeof(wg_hash_t));
+    wg_mix_hash(&hash_of_c_identifier, wg_identifier, strlen(wg_identifier));
     return TRUE;
 }
 
@@ -337,8 +344,7 @@ wg_process_initiation(
     // c = Hash(CONSTRUCTION)
     memcpy(c, hash_of_construction, sizeof(wg_hash_t));
     // h = Hash(c || IDENTIFIER)
-    memcpy(h, c, sizeof(*c));
-    wg_mix_hash(&h, wg_identifier, strlen(wg_identifier));
+    memcpy(h, hash_of_c_identifier, sizeof(wg_hash_t));
     // h = Hash(h || Spub_r)
     wg_mix_hash(&h, static_public_responder, sizeof(wg_key_t));
     // c = KDF1(c, msg.ephemeral)
