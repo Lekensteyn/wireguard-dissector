@@ -6,6 +6,7 @@
  */
 
 #include <glib.h>
+#include <gcrypt.h>
 
 typedef guchar wg_key_t[32];
 /** Output size of the Hash function. */
@@ -93,6 +94,6 @@ wg_process_response(
     const wg_key_t     *initiator_ephemeral_public,
     const wg_hash_t    *initiator_hash,
     const wg_hash_t    *initiator_chaining_key,
-    void               *send_cipher,
-    void               *recv_cipher
+    gcry_cipher_hd_t   *initiator_recv_cipher,
+    gcry_cipher_hd_t   *responder_recv_cipher
 );

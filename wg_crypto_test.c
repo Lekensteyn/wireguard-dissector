@@ -6,7 +6,6 @@
  */
 
 #include "wg_crypto.h"
-#include <gcrypt.h>
 
 // {{{ Test packets
 static unsigned char pkt_wg_initiation[] = {
@@ -68,6 +67,7 @@ int main()
     wg_hash_t   initiator_h, initiator_ck;
     wg_hash_t   responder_h, responder_ck;
     wg_key_t   *Epub_i = (wg_key_t *)(pkt_wg_initiation + 8);
+    gcry_cipher_hd_t cipher_i, cipher_r;
 
     if (!gcry_check_version(NULL)) {
         g_assert_not_reached();
@@ -105,11 +105,21 @@ int main()
     g_assert(memcmp(initiator_h, responder_h, sizeof(initiator_h)) == 0);
     g_assert(memcmp(initiator_ck, responder_ck, sizeof(initiator_ck)) == 0);
 
-    r = wg_process_response(pkt_wg_responder, pkt_wg_responder_len, &initiator_keys, TRUE, Epub_i, &initiator_h, &initiator_ck, NULL, NULL);
+    cipher_i = cipher_r = NULL;
+    r = wg_process_response(pkt_wg_responder, pkt_wg_responder_len, &initiator_keys, TRUE, Epub_i, &initiator_h, &initiator_ck, &cipher_i, &cipher_r);
     g_assert(r);
+    g_assert(cipher_i);
+    g_assert(cipher_r);
+    gcry_cipher_close(cipher_i);
+    gcry_cipher_close(cipher_r);
 
-    r = wg_process_response(pkt_wg_responder, pkt_wg_responder_len, &responder_keys, FALSE, Epub_i, &responder_h, &responder_ck, NULL, NULL);
+    cipher_i = cipher_r = NULL;
+    r = wg_process_response(pkt_wg_responder, pkt_wg_responder_len, &responder_keys, FALSE, Epub_i, &responder_h, &responder_ck, &cipher_i, &cipher_r);
     g_assert(r);
+    g_assert(cipher_i);
+    g_assert(cipher_r);
+    gcry_cipher_close(cipher_i);
+    gcry_cipher_close(cipher_r);
 
     return 0;
 }

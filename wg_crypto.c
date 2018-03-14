@@ -80,7 +80,8 @@ gboolean
 wg_decrypt_init(void)
 {
     if (gcry_md_test_algo(GCRY_MD_BLAKE2S_128) != 0 ||
-        gcry_md_test_algo(GCRY_MD_BLAKE2S_256) != 0) {
+        gcry_md_test_algo(GCRY_MD_BLAKE2S_256) != 0 ||
+        gcry_cipher_test_algo(GCRY_CIPHER_CHACHA20) != 0) {
         return FALSE;
     }
     static const char construction[] = "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s";
@@ -289,6 +290,15 @@ aead_decrypt(const wg_key_t *key, guint64 counter, const guchar *ctext, guint ct
     return err == 0;
 }
 
+static void
+wg_create_transport_cipher(gcry_cipher_hd_t *hd, wg_key_t *transport_key)
+{
+    if (gcry_cipher_open(hd, GCRY_CIPHER_CHACHA20, GCRY_CIPHER_MODE_POLY1305, 0) ||
+        gcry_cipher_setkey(*hd, transport_key, sizeof(*transport_key))) {
+        g_assert_not_reached();
+    }
+}
+
 gboolean
 wg_process_initiation(
     const guchar       *msg,
@@ -381,8 +391,8 @@ wg_process_response(
     const wg_key_t     *initiator_ephemeral_public,
     const wg_hash_t    *initiator_hash,
     const wg_hash_t    *initiator_chaining_key,
-    void               *send_cipher,
-    void               *recv_cipher
+    gcry_cipher_hd_t   *initiator_recv_cipher,
+    gcry_cipher_hd_t   *responder_recv_cipher
 )
 {
     if (msg_len != sizeof(wg_response_message_t)) {
@@ -431,6 +441,13 @@ wg_process_response(
     }
     // h = Hash(h || msg.empty)
     wg_mix_hash(&h, m->empty, sizeof(m->empty));
-    // TODO create ciphers
+
+    // Calculate transport keys and create ciphers.
+    // (Tsend_i = Trecv_r, Trecv_i = Tsend_r) = KDF2(C, "")
+    wg_hash_t transport_keys[2];
+    wg_kdf(c, NULL, 0, 2, transport_keys);
+
+    wg_create_transport_cipher(initiator_recv_cipher, &transport_keys[1]);
+    wg_create_transport_cipher(responder_recv_cipher, &transport_keys[0]);
     return TRUE;
 }
