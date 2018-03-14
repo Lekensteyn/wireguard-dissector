@@ -360,3 +360,31 @@ wg_process_initiation(
     memcpy(chaining_key_out, k, sizeof(wg_hash_t));
     return TRUE;
 }
+
+gboolean
+wg_process_response(
+    const guchar       *msg,
+    guint               msg_len,
+    const wg_keys_t    *keys,
+    gboolean            is_initiator_keys,
+    wg_hash_t          *initiator_hash,
+    wg_hash_t          *initiator_chaining_key,
+    void               *send_cipher,
+    void               *recv_cipher
+)
+{
+    // c = KDF1(c, msg.ephemeral)
+    // h = Hash(h || msg.ephemeral)
+    //  dh1 = DH(Epriv_i, Epub_r)       if kType == I
+    //  dh1 = DH(Epriv_r, Epub_i)       if kType == R
+    // c = KDF1(c, dh1)
+    //  dh2 = DH(Spriv_i, Epub_r)       if kType == I
+    //  dh2 = DH(Epriv_r, Spub_i)       if kType == R
+    // c = KDF1(c, dh2)
+    // c, t, k = KDF3(c, PSK)
+    // h = Hash(h || t)
+    // empty = AEAD-Decrypt(k, 0, msg.empty, h)
+    // h = Hash(h || msg.empty)
+    g_assert(!"TODO not wg_process_response not fully implemented");
+    return TRUE;
+}
