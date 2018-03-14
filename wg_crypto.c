@@ -378,6 +378,7 @@ wg_process_response(
     guint               msg_len,
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
+    const wg_key_t     *initiator_ephemeral_public,
     const wg_hash_t    *initiator_hash,
     const wg_hash_t    *initiator_chaining_key,
     void               *send_cipher,
@@ -405,8 +406,7 @@ wg_process_response(
     if (is_initiator_keys) {
         dh_x25519(&dh1, &keys->sender_ephemeral.private_key, &m->ephemeral);
     } else {
-        //dh_x25519(&dh1, &keys->sender_ephemeral.private_key, TODO_initiator_ephemeral);
-        g_assert(!"missing Epub_i from initiation message");
+        dh_x25519(&dh1, &keys->sender_ephemeral.private_key, initiator_ephemeral_public);
     }
     // c = KDF1(c, dh1)
     wg_kdf(c, dh1, sizeof(dh1), 1, c);
@@ -431,6 +431,6 @@ wg_process_response(
     }
     // h = Hash(h || msg.empty)
     wg_mix_hash(&h, m->empty, sizeof(m->empty));
-    g_assert(!"TODO not wg_process_response not fully implemented");
+    // TODO create ciphers
     return TRUE;
 }

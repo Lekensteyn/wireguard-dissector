@@ -67,6 +67,7 @@ int main()
     wg_keys_t   initiator_keys, responder_keys;
     wg_hash_t   initiator_h, initiator_ck;
     wg_hash_t   responder_h, responder_ck;
+    wg_key_t   *Epub_i = (wg_key_t *)(pkt_wg_initiation + 8);
 
     if (!gcry_check_version(NULL)) {
         g_assert_not_reached();
@@ -104,10 +105,10 @@ int main()
     g_assert(memcmp(initiator_h, responder_h, sizeof(initiator_h)) == 0);
     g_assert(memcmp(initiator_ck, responder_ck, sizeof(initiator_ck)) == 0);
 
-    r = wg_process_response(pkt_wg_responder, pkt_wg_responder_len, &initiator_keys, TRUE, &initiator_h, &initiator_ck, NULL, NULL);
+    r = wg_process_response(pkt_wg_responder, pkt_wg_responder_len, &initiator_keys, TRUE, Epub_i, &initiator_h, &initiator_ck, NULL, NULL);
     g_assert(r);
 
-    r = wg_process_response(pkt_wg_responder, pkt_wg_responder_len, &responder_keys, FALSE, &responder_h, &responder_ck, NULL, NULL);
+    r = wg_process_response(pkt_wg_responder, pkt_wg_responder_len, &responder_keys, FALSE, Epub_i, &responder_h, &responder_ck, NULL, NULL);
     g_assert(r);
 
     return 0;
