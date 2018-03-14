@@ -368,7 +368,7 @@ wg_process_initiation(
 
     // save (h, k) context for responder message processing
     memcpy(hash_out, h, sizeof(wg_hash_t));
-    memcpy(chaining_key_out, k, sizeof(wg_hash_t));
+    memcpy(chaining_key_out, c, sizeof(wg_hash_t));
     return TRUE;
 }
 
