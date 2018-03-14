@@ -26,7 +26,18 @@ typedef struct {
 } wg_initiation_message_t;
 G_STATIC_ASSERT(sizeof(wg_initiation_message_t) == 148);
 
-#define WG_RESPONSE_LENGTH              92
+/** Wire serialization of response message. */
+typedef struct {
+    guchar  type;
+    guchar  reserved[3];
+    guchar  sender[4];
+    guchar  receiver[4];
+    guchar  ephemeral[32];
+    guchar  empty[AUTH_TAG_LENGTH];
+    guchar  mac1[16];
+    guchar  mac2[16];
+} wg_response_message_t;
+G_STATIC_ASSERT(sizeof(wg_response_message_t) == 92);
 
 /** Hash(CONSTRUCTION), initialized by wg_decrypt_init. */
 static wg_hash_t hash_of_construction;
@@ -161,7 +172,7 @@ wg_check_mac1(
         hashed_length = offsetof(wg_initiation_message_t, mac1);
         break;
     case 2: // Response
-        hashed_length = WG_RESPONSE_LENGTH - 32;
+        hashed_length = offsetof(wg_response_message_t, mac1);
         break;
     default:
         g_assert_not_reached(); // TODO remove after test cases are done
@@ -367,24 +378,59 @@ wg_process_response(
     guint               msg_len,
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
-    wg_hash_t          *initiator_hash,
-    wg_hash_t          *initiator_chaining_key,
+    const wg_hash_t    *initiator_hash,
+    const wg_hash_t    *initiator_chaining_key,
     void               *send_cipher,
     void               *recv_cipher
 )
 {
+    if (msg_len != sizeof(wg_response_message_t)) {
+        g_assert_not_reached(); // TODO remove once tests are complete.
+        return FALSE;
+    }
+    const wg_response_message_t *m = (const wg_response_message_t *)msg;
+
+    wg_hash_t ctk[3], h;
+    wg_hash_t *c = &ctk[0], *t = &ctk[1], *k = &ctk[2];
+    memcpy(h, initiator_hash, sizeof(wg_hash_t));
+    memcpy(c, initiator_chaining_key, sizeof(wg_hash_t));
+
     // c = KDF1(c, msg.ephemeral)
+    wg_kdf(c, m->ephemeral, sizeof(m->ephemeral), 1, c);
     // h = Hash(h || msg.ephemeral)
-    //  dh1 = DH(Epriv_i, Epub_r)       if kType == I
-    //  dh1 = DH(Epriv_r, Epub_i)       if kType == R
+    wg_mix_hash(&h, m->ephemeral, sizeof(m->ephemeral));
+    //  dh1 = DH(Epriv_i, msg.ephemeral)    if kType == I
+    //  dh1 = DH(Epriv_r, Epub_i)           if kType == R
+    wg_key_t dh1;
+    if (is_initiator_keys) {
+        dh_x25519(&dh1, &keys->sender_ephemeral.private_key, &m->ephemeral);
+    } else {
+        //dh_x25519(&dh1, &keys->sender_ephemeral.private_key, TODO_initiator_ephemeral);
+        g_assert(!"missing Epub_i from initiation message");
+    }
     // c = KDF1(c, dh1)
-    //  dh2 = DH(Spriv_i, Epub_r)       if kType == I
-    //  dh2 = DH(Epriv_r, Spub_i)       if kType == R
+    wg_kdf(c, dh1, sizeof(dh1), 1, c);
+    //  dh2 = DH(Spriv_i, msg.ephemeral)    if kType == I
+    //  dh2 = DH(Epriv_r, Spub_i)           if kType == R
+    wg_key_t dh2;
+    if (is_initiator_keys) {
+        dh_x25519(&dh2, &keys->sender_static.private_key, &m->ephemeral);
+    } else {
+        dh_x25519(&dh2, &keys->sender_ephemeral.private_key, &keys->receiver_static_public);
+    }
     // c = KDF1(c, dh2)
+    wg_kdf(c, dh2, sizeof(dh2), 1, c);
     // c, t, k = KDF3(c, PSK)
+    wg_kdf(c, keys->psk, sizeof(keys->psk), 3, ctk);
     // h = Hash(h || t)
+    wg_mix_hash(&h, t, sizeof(wg_hash_t));
     // empty = AEAD-Decrypt(k, 0, msg.empty, h)
+    if (!aead_decrypt(k, 0, m->empty, sizeof(m->empty), h, sizeof(wg_hash_t), NULL, 0)) {
+        g_assert(!"empty decryption failed"); // TODO remove once tests are complete.
+        return FALSE;
+    }
     // h = Hash(h || msg.empty)
+    wg_mix_hash(&h, m->empty, sizeof(m->empty));
     g_assert(!"TODO not wg_process_response not fully implemented");
     return TRUE;
 }

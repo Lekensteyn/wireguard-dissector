@@ -79,3 +79,19 @@ wg_process_initiation(
     wg_hash_t          *hash_out,
     wg_hash_t          *chaining_key_out
 );
+
+/**
+ * Given state from the initiator message, tries to decrypt the response message
+ * and generate sender/receiver ciphers.
+ */
+gboolean
+wg_process_response(
+    const guchar       *msg,
+    guint               msg_len,
+    const wg_keys_t    *keys,
+    gboolean            is_initiator_keys,
+    const wg_hash_t    *initiator_hash,
+    const wg_hash_t    *initiator_chaining_key,
+    void               *send_cipher,
+    void               *recv_cipher
+);
