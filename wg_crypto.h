@@ -75,5 +75,7 @@ wg_process_initiation(
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
     wg_key_t           *static_public_i_out,
-    wg_tai64n_t        *timestamp_out
+    wg_tai64n_t        *timestamp_out,
+    wg_hash_t          *hash_out,
+    wg_hash_t          *chaining_key_out
 );

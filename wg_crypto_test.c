@@ -65,6 +65,7 @@ int main()
     };
     gboolean    r;
     wg_keys_t   initiator_keys, responder_keys;
+    wg_hash_t   h, ck;
 
     if (!gcry_check_version(NULL)) {
         g_assert_not_reached();
@@ -88,12 +89,12 @@ int main()
     r = wg_check_mac1(pkt_wg_responder, pkt_wg_responder_len, &initiator_keys.sender_mac1_key);
     g_assert(r);
 
-    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &initiator_keys, TRUE, &Spub_i, &timestamp);
+    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &initiator_keys, TRUE, &Spub_i, &timestamp, &h, &ck);
     g_assert(r);
     g_assert(memcmp(Spub_i, initiator_keys.sender_static.public_key, sizeof(Spub_i)) == 0);
     g_assert(memcmp(timestamp, timestamp_expected, sizeof(timestamp)) == 0);
 
-    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &responder_keys, FALSE, &Spub_i, &timestamp);
+    r = wg_process_initiation(pkt_wg_initiation, pkt_wg_initiation_len, &responder_keys, FALSE, &Spub_i, &timestamp, &h, &ck);
     g_assert(r);
     g_assert(memcmp(Spub_i, responder_keys.receiver_static_public, sizeof(Spub_i)) == 0);
     g_assert(memcmp(timestamp, timestamp_expected, sizeof(timestamp)) == 0);
