@@ -56,7 +56,7 @@ static const char *responder_secrets[] = {
 
 int main()
 {
-    wg_key_t    Spub_i = { 0 };
+    wg_qqword   Spub_i = { 0 };
     wg_tai64n_t timestamp = { 0 };
     wg_tai64n_t timestamp_expected = {
         0x40, 0x00, 0x00, 0x00,
@@ -64,9 +64,9 @@ int main()
     };
     gboolean    r;
     wg_keys_t   initiator_keys, responder_keys;
-    wg_hash_t   initiator_h, initiator_ck;
-    wg_hash_t   responder_h, responder_ck;
-    wg_key_t   *Epub_i = (wg_key_t *)(pkt_wg_initiation + 8);
+    wg_qqword   initiator_h, initiator_ck;
+    wg_qqword   responder_h, responder_ck;
+    wg_qqword  *Epub_i = (wg_qqword *)(pkt_wg_initiation + 8);
     gcry_cipher_hd_t cipher_i, cipher_r;
 
     if (!gcry_check_version(NULL)) {

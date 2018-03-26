@@ -40,12 +40,12 @@ typedef struct {
 G_STATIC_ASSERT(sizeof(wg_response_message_t) == 92);
 
 /** Hash(CONSTRUCTION), initialized by wg_decrypt_init. */
-static wg_hash_t hash_of_construction;
+static wg_qqword hash_of_construction;
 /** Hash(Hash(CONSTRUCTION) || IDENTIFIER), initialized by wg_decrypt_init. */
-static wg_hash_t hash_of_c_identifier;
+static wg_qqword hash_of_c_identifier;
 
 static gboolean
-decode_base64_key(wg_key_t *out, const char *str)
+decode_base64_key(wg_qqword *out, const char *str)
 {
     gsize out_len;
     gchar tmp[45];
@@ -55,21 +55,21 @@ decode_base64_key(wg_key_t *out, const char *str)
     }
     memcpy(tmp, str, sizeof(tmp));
     g_base64_decode_inplace(tmp, &out_len);
-    if (out_len != sizeof(wg_key_t)) {
+    if (out_len != sizeof(wg_qqword)) {
         return FALSE;
     }
-    memcpy((char *)out, tmp, sizeof(wg_key_t));
+    memcpy((char *)out, tmp, sizeof(wg_qqword));
     return TRUE;
 }
 
 static void
-priv_to_pub(const wg_key_t *priv, wg_key_t *pub)
+priv_to_pub(const wg_qqword *priv, wg_qqword *pub)
 {
     crypto_scalarmult_base((guchar *)pub, (const guchar *)priv);
 }
 
 static void
-dh_x25519(wg_key_t *shared_secret, const wg_key_t *priv, const wg_key_t *pub)
+dh_x25519(wg_qqword *shared_secret, const wg_qqword *priv, const wg_qqword *pub)
 {
     int r;
     r = crypto_scalarmult((guchar *)shared_secret, (const guchar *)priv, (const guchar *)pub);
@@ -77,7 +77,7 @@ dh_x25519(wg_key_t *shared_secret, const wg_key_t *priv, const wg_key_t *pub)
     g_assert(r == 0);
 }
 
-static void wg_mix_hash(wg_hash_t *h, const void *data, guint data_len);
+static void wg_mix_hash(wg_qqword *h, const void *data, guint data_len);
 
 gboolean
 wg_decrypt_init(void)
@@ -92,7 +92,7 @@ wg_decrypt_init(void)
             construction, strlen(construction));
 
     static const char wg_identifier[] = "WireGuard v1 zx2c4 Jason@zx2c4.com";
-    memcpy(&hash_of_c_identifier, hash_of_construction, sizeof(wg_hash_t));
+    memcpy(&hash_of_c_identifier, hash_of_construction, sizeof(wg_qqword));
     wg_mix_hash(&hash_of_c_identifier, wg_identifier, strlen(wg_identifier));
     return TRUE;
 }
@@ -101,14 +101,14 @@ wg_decrypt_init(void)
  * Computed MAC1. Caller must ensure that GCRY_MD_BLAKE2S_256 is available.
  */
 static void
-wg_mac1_key(const wg_key_t *static_public, wg_hash_t *mac_key_out)
+wg_mac1_key(const wg_qqword *static_public, wg_qqword *mac_key_out)
 {
     gcry_md_hd_t hd;
     if (gcry_md_open(&hd, GCRY_MD_BLAKE2S_256, 0) == 0) {
         const char wg_label_mac1[] = "mac1----";
         gcry_md_write(hd, wg_label_mac1, strlen(wg_label_mac1));
-        gcry_md_write(hd, static_public, sizeof(wg_key_t));
-        memcpy(mac_key_out, gcry_md_read(hd, 0), sizeof(wg_hash_t));
+        gcry_md_write(hd, static_public, sizeof(wg_qqword));
+        memcpy(mac_key_out, gcry_md_read(hd, 0), sizeof(wg_qqword));
         gcry_md_close(hd);
         return;
     }
@@ -165,7 +165,7 @@ gboolean
 wg_check_mac1(
     const guchar       *msg,
     guint               msg_len,
-    const wg_hash_t    *mac1_key
+    const wg_qqword    *mac1_key
 )
 {
     guint hashed_length;
@@ -193,7 +193,7 @@ wg_check_mac1(
 
     const wg_mac_t *msg_mac1 = (wg_mac_t *)&msg[hashed_length];
     wg_mac_t real_mac1;
-    wg_mac(mac1_key, sizeof(wg_hash_t), msg, hashed_length, &real_mac1);
+    wg_mac(mac1_key, sizeof(wg_qqword), msg, hashed_length, &real_mac1);
     // TODO should this be constant time compare?
     return memcmp(msg_mac1, real_mac1, sizeof(wg_mac_t)) == 0;
 }
@@ -241,15 +241,15 @@ wg_check_mac1(
  * Update the new chained hash value: h = Hash(h || data).
  */
 static void
-wg_mix_hash(wg_hash_t *h, const void *data, guint data_len)
+wg_mix_hash(wg_qqword *h, const void *data, guint data_len)
 {
     gcry_md_hd_t hd;
     if (gcry_md_open(&hd, GCRY_MD_BLAKE2S_256, 0)) {
         g_assert_not_reached();
     }
-    gcry_md_write(hd, h, sizeof(wg_hash_t));
+    gcry_md_write(hd, h, sizeof(wg_qqword));
     gcry_md_write(hd, data, data_len);
-    memcpy(h, gcry_md_read(hd, 0), sizeof(wg_hash_t));
+    memcpy(h, gcry_md_read(hd, 0), sizeof(wg_qqword));
     gcry_md_close(hd);
 }
 
@@ -257,12 +257,12 @@ wg_mix_hash(wg_hash_t *h, const void *data, guint data_len)
  * Computes KDF_n(key, input) where n is the number of derived keys.
  */
 static void
-wg_kdf(const wg_key_t *key, const void *input, guint input_len, guint n, wg_key_t *out)
+wg_kdf(const wg_qqword *key, const void *input, guint input_len, guint n, wg_qqword *out)
 {
     guint8          prk[32];    /* Blake2s_256 hash output. */
     gcry_error_t    err;
     err = hkdf_extract(GCRY_MD_BLAKE2S_256, (const guint8 *)key,
-            sizeof(wg_key_t), input, input_len, prk);
+            sizeof(wg_qqword), input, input_len, prk);
     g_assert(err == 0);
     err = hkdf_expand(GCRY_MD_BLAKE2S_256, prk, sizeof(prk), NULL, 0, (guint8 *)out, 32 * n);
     g_assert(err == 0);
@@ -273,7 +273,7 @@ wg_kdf(const wg_key_t *key, const void *input, guint input_len, guint n, wg_key_
  * included with the ciphertext.
  */
 static gboolean
-aead_decrypt(const wg_key_t *key, guint64 counter, const guchar *ctext, guint ctext_len, const guchar *aad, guint aad_len, guchar *out, guint out_len)
+aead_decrypt(const wg_qqword *key, guint64 counter, const guchar *ctext, guint ctext_len, const guchar *aad, guint aad_len, guchar *out, guint out_len)
 {
     gcry_cipher_hd_t    hd;
     gcry_error_t        err;
@@ -298,7 +298,7 @@ aead_decrypt(const wg_key_t *key, guint64 counter, const guchar *ctext, guint ct
 }
 
 static void
-wg_create_transport_cipher(gcry_cipher_hd_t *hd, wg_key_t *transport_key)
+wg_create_transport_cipher(gcry_cipher_hd_t *hd, wg_qqword *transport_key)
 {
     if (gcry_cipher_open(hd, GCRY_CIPHER_CHACHA20, GCRY_CIPHER_MODE_POLY1305, 0) ||
         gcry_cipher_setkey(*hd, transport_key, sizeof(*transport_key))) {
@@ -312,10 +312,10 @@ wg_process_initiation(
     guint               msg_len,
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
-    wg_key_t           *static_public_i_out,
+    wg_qqword          *static_public_i_out,
     wg_tai64n_t        *timestamp_out,
-    wg_hash_t          *hash_out,
-    wg_hash_t          *chaining_key_out
+    wg_qqword          *hash_out,
+    wg_qqword          *chaining_key_out
 )
 {
     if (msg_len != sizeof(wg_initiation_message_t)) {
@@ -323,7 +323,7 @@ wg_process_initiation(
         return FALSE;
     }
     const wg_initiation_message_t *m = (const wg_initiation_message_t *)msg;
-    const wg_key_t *static_public_responder;
+    const wg_qqword *static_public_responder;
 
     // Inputs:
     //  Spub_r, Spub_i, Spriv_i, Epriv_i    if kType = I
@@ -339,30 +339,30 @@ wg_process_initiation(
         static_public_responder = &keys->sender_static.public_key;
     }
 
-    wg_hash_t c_and_k[2], h;
-    wg_hash_t *c = &c_and_k[0], *k = &c_and_k[1];
+    wg_qqword c_and_k[2], h;
+    wg_qqword *c = &c_and_k[0], *k = &c_and_k[1];
     // c = Hash(CONSTRUCTION)
-    memcpy(c, hash_of_construction, sizeof(wg_hash_t));
+    memcpy(c, hash_of_construction, sizeof(wg_qqword));
     // h = Hash(c || IDENTIFIER)
-    memcpy(h, hash_of_c_identifier, sizeof(wg_hash_t));
+    memcpy(h, hash_of_c_identifier, sizeof(wg_qqword));
     // h = Hash(h || Spub_r)
-    wg_mix_hash(&h, static_public_responder, sizeof(wg_key_t));
+    wg_mix_hash(&h, static_public_responder, sizeof(wg_qqword));
     // c = KDF1(c, msg.ephemeral)
     wg_kdf(c, m->ephemeral, sizeof(m->ephemeral), 1, c);
     // h = Hash(h || msg.ephemeral)
     wg_mix_hash(&h, m->ephemeral, sizeof(m->ephemeral));
     //  dh1 = DH(Epriv_i, Spub_r)           if kType = I
     //  dh1 = DH(Spriv_r, msg.ephemeral)    if kType = R
-    wg_key_t dh1;
+    wg_qqword dh1;
     if (is_initiator_keys) {
         dh_x25519(&dh1, &keys->sender_ephemeral.private_key, static_public_responder);
     } else {
-        dh_x25519(&dh1, &keys->sender_static.private_key, (const wg_key_t *)&m->ephemeral);
+        dh_x25519(&dh1, &keys->sender_static.private_key, (const wg_qqword *)&m->ephemeral);
     }
     // (c, k) = KDF2(c, dh1)
     wg_kdf(c, dh1, sizeof(dh1), 2, c_and_k);
     // Spub_i = AEAD-Decrypt(k, 0, msg.static, h)
-    if (!aead_decrypt(k, 0, m->static_public, sizeof(m->static_public), h, sizeof(wg_hash_t), (guchar *)static_public_i_out, sizeof(*static_public_i_out))) {
+    if (!aead_decrypt(k, 0, m->static_public, sizeof(m->static_public), h, sizeof(wg_qqword), (guchar *)static_public_i_out, sizeof(*static_public_i_out))) {
         g_assert(!"static decryption failed"); // TODO remove once tests are complete.
         return FALSE;
     }
@@ -373,9 +373,9 @@ wg_process_initiation(
     //  dh2 = DH(Spriv_i, Spub_r)           if kType = I
     //  dh2 = DH(Spriv_r, Spub_i)           if kType = R
     // (c, k) = KDF2(c, dh2)
-    wg_kdf(c, keys->static_dh_secret, sizeof(wg_key_t), 2, c_and_k);
+    wg_kdf(c, keys->static_dh_secret, sizeof(wg_qqword), 2, c_and_k);
     // timestamp = AEAD-Decrypt(k, 0, msg.timestamp, h)
-    if (!aead_decrypt(k, 0, m->timestamp, sizeof(m->timestamp), h, sizeof(wg_hash_t), (guchar *)timestamp_out, sizeof(*timestamp_out))) {
+    if (!aead_decrypt(k, 0, m->timestamp, sizeof(m->timestamp), h, sizeof(wg_qqword), (guchar *)timestamp_out, sizeof(*timestamp_out))) {
         g_assert(!"timestamp decryption failed"); // TODO remove once tests are complete.
         return FALSE;
     }
@@ -383,8 +383,8 @@ wg_process_initiation(
     wg_mix_hash(&h, m->timestamp, sizeof(m->timestamp));
 
     // save (h, k) context for responder message processing
-    memcpy(hash_out, h, sizeof(wg_hash_t));
-    memcpy(chaining_key_out, c, sizeof(wg_hash_t));
+    memcpy(hash_out, h, sizeof(wg_qqword));
+    memcpy(chaining_key_out, c, sizeof(wg_qqword));
     return TRUE;
 }
 
@@ -394,9 +394,9 @@ wg_process_response(
     guint               msg_len,
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
-    const wg_key_t     *initiator_ephemeral_public,
-    const wg_hash_t    *initiator_hash,
-    const wg_hash_t    *initiator_chaining_key,
+    const wg_qqword    *initiator_ephemeral_public,
+    const wg_qqword    *initiator_hash,
+    const wg_qqword    *initiator_chaining_key,
     gcry_cipher_hd_t   *initiator_recv_cipher,
     gcry_cipher_hd_t   *responder_recv_cipher
 )
@@ -407,10 +407,10 @@ wg_process_response(
     }
     const wg_response_message_t *m = (const wg_response_message_t *)msg;
 
-    wg_hash_t ctk[3], h;
-    wg_hash_t *c = &ctk[0], *t = &ctk[1], *k = &ctk[2];
-    memcpy(h, initiator_hash, sizeof(wg_hash_t));
-    memcpy(c, initiator_chaining_key, sizeof(wg_hash_t));
+    wg_qqword ctk[3], h;
+    wg_qqword *c = &ctk[0], *t = &ctk[1], *k = &ctk[2];
+    memcpy(h, initiator_hash, sizeof(wg_qqword));
+    memcpy(c, initiator_chaining_key, sizeof(wg_qqword));
 
     // c = KDF1(c, msg.ephemeral)
     wg_kdf(c, m->ephemeral, sizeof(m->ephemeral), 1, c);
@@ -418,7 +418,7 @@ wg_process_response(
     wg_mix_hash(&h, m->ephemeral, sizeof(m->ephemeral));
     //  dh1 = DH(Epriv_i, msg.ephemeral)    if kType == I
     //  dh1 = DH(Epriv_r, Epub_i)           if kType == R
-    wg_key_t dh1;
+    wg_qqword dh1;
     if (is_initiator_keys) {
         dh_x25519(&dh1, &keys->sender_ephemeral.private_key, &m->ephemeral);
     } else {
@@ -428,7 +428,7 @@ wg_process_response(
     wg_kdf(c, dh1, sizeof(dh1), 1, c);
     //  dh2 = DH(Spriv_i, msg.ephemeral)    if kType == I
     //  dh2 = DH(Epriv_r, Spub_i)           if kType == R
-    wg_key_t dh2;
+    wg_qqword dh2;
     if (is_initiator_keys) {
         dh_x25519(&dh2, &keys->sender_static.private_key, &m->ephemeral);
     } else {
@@ -439,9 +439,9 @@ wg_process_response(
     // c, t, k = KDF3(c, PSK)
     wg_kdf(c, keys->psk, sizeof(keys->psk), 3, ctk);
     // h = Hash(h || t)
-    wg_mix_hash(&h, t, sizeof(wg_hash_t));
+    wg_mix_hash(&h, t, sizeof(wg_qqword));
     // empty = AEAD-Decrypt(k, 0, msg.empty, h)
-    if (!aead_decrypt(k, 0, m->empty, sizeof(m->empty), h, sizeof(wg_hash_t), NULL, 0)) {
+    if (!aead_decrypt(k, 0, m->empty, sizeof(m->empty), h, sizeof(wg_qqword), NULL, 0)) {
         g_assert(!"empty decryption failed"); // TODO remove once tests are complete.
         return FALSE;
     }
@@ -450,7 +450,7 @@ wg_process_response(
 
     // Calculate transport keys and create ciphers.
     // (Tsend_i = Trecv_r, Trecv_i = Tsend_r) = KDF2(C, "")
-    wg_hash_t transport_keys[2];
+    wg_qqword transport_keys[2];
     wg_kdf(c, NULL, 0, 2, transport_keys);
 
     wg_create_transport_cipher(initiator_recv_cipher, &transport_keys[1]);

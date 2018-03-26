@@ -8,17 +8,16 @@
 #include <glib.h>
 #include <gcrypt.h>
 
-typedef guchar wg_key_t[32];
-/** Output size of the Hash function. */
-typedef guchar wg_hash_t[32];
+/** Most operations operate on 32 byte units (keys and hash output). */
+typedef guchar wg_qqword[32];
 /** MAC1 and MAC2 outputs. */
 typedef guchar wg_mac_t[16];
 /** Timestamp type (TAI64N). */
 typedef guchar wg_tai64n_t[12];
 
 typedef struct {
-    wg_key_t    private_key;        ///< Externally supplied.
-    wg_key_t    public_key;         ///< Computed from private key.
+    wg_qqword       private_key;        ///< Externally supplied.
+    wg_qqword       public_key;         ///< Computed from private key.
 } wg_keypair_t;
 
 /**
@@ -27,12 +26,12 @@ typedef struct {
 typedef struct {
     wg_keypair_t    sender_static;
     wg_keypair_t    sender_ephemeral;
-    wg_key_t        receiver_static_public;
-    wg_key_t        psk;            ///< externally supplied.
+    wg_qqword       receiver_static_public;
+    wg_qqword       psk;            ///< externally supplied.
     // optimization: pre-expand MAC1 label for static keys
-    wg_hash_t       sender_mac1_key;
-    wg_hash_t       receiver_mac1_key;
-    wg_key_t        static_dh_secret;
+    wg_qqword       sender_mac1_key;
+    wg_qqword       receiver_mac1_key;
+    wg_qqword       static_dh_secret;
 } wg_keys_t;
 
 /**
@@ -61,7 +60,7 @@ gboolean
 wg_check_mac1(
     const guchar       *msg,
     guint               msg_len,
-    const wg_hash_t    *mac1_key
+    const wg_qqword    *mac1_key
 );
 
 /**
@@ -75,10 +74,10 @@ wg_process_initiation(
     guint               msg_len,
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
-    wg_key_t           *static_public_i_out,
+    wg_qqword          *static_public_i_out,
     wg_tai64n_t        *timestamp_out,
-    wg_hash_t          *hash_out,
-    wg_hash_t          *chaining_key_out
+    wg_qqword          *hash_out,
+    wg_qqword          *chaining_key_out
 );
 
 /**
@@ -91,9 +90,9 @@ wg_process_response(
     guint               msg_len,
     const wg_keys_t    *keys,
     gboolean            is_initiator_keys,
-    const wg_key_t     *initiator_ephemeral_public,
-    const wg_hash_t    *initiator_hash,
-    const wg_hash_t    *initiator_chaining_key,
+    const wg_qqword    *initiator_ephemeral_public,
+    const wg_qqword    *initiator_hash,
+    const wg_qqword    *initiator_chaining_key,
     gcry_cipher_hd_t   *initiator_recv_cipher,
     gcry_cipher_hd_t   *responder_recv_cipher
 );
