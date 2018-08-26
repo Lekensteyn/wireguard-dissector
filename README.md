@@ -2,6 +2,9 @@
 Wireshark dissector (written in Lua) for dissecting the [WireGuard][1] tunneling
 protocol.
 
+**This dissector is obsolete, an improved version is included in Wireshark
+2.9.x.** See [this comment][5] for more further instructions.
+
 ![Screenshot of Wireshark with WireGuard traffic](wireshark-wg.png)
 
 Requirements:
@@ -9,8 +12,9 @@ Requirements:
  - Wireshark 2.0.2 or newer (tested with Wireshark 2.3.x).
  - [luagcrypt][2] and Libgcrypt 1.7 for (optional) decryption support.
 
-The plan is to eventually rewrite this prototype into a dissector that is
-included with the main Wireshark sources.
+~~The plan is to eventually rewrite this prototype into a dissector that is
+included with the main Wireshark sources.~~ An improved version is included with
+the current development version (git master, 2.9.x).
 
 ## Installation and usage
 Install [wg.lua](wg.lua) in the [Wireshark plugins folder][4] (usually
@@ -73,3 +77,4 @@ See [LICENSE.txt](LICENSE.txt) for more details.
  [2]: https://github.com/Lekensteyn/luagcrypt
  [3]: https://www.kernel.org/doc/Documentation/trace/kprobetrace.txt
  [4]: https://www.wireshark.org/docs/wsug_html_chunked/ChAppFilesConfigurationSection.html
+ [5]: https://bugs.wireshark.org/bugzilla/show_bug.cgi?id=15011#c18
